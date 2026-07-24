@@ -1,19 +1,13 @@
-import albedo from "@albedo-link/intent";
+import { defaultModules } from "@creit.tech/stellar-wallets-kit/modules/utils";
+import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk";
+import type {
+  ModuleInterface,
+  Networks as WalletKitNetwork,
+} from "@creit.tech/stellar-wallets-kit/types";
 import {
-  getAddress as getFreighterAddress,
-  getNetworkDetails as getFreighterNetworkDetails,
-  isConnected as isFreighterConnected,
-  requestAccess as requestFreighterAccess,
-  signAuthEntry as signFreighterAuthEntry,
-  signTransaction as signFreighterTransaction,
-} from "@stellar/freighter-api";
-import {
-  FeeBumpTransaction,
   Networks,
-  StrKey,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
-import { verifyAsync } from "@noble/ed25519";
 
 import type { ContractRuntimeConfig } from "./config";
 import { CommitPassError, isStellarAddress } from "./domain";
@@ -22,12 +16,13 @@ import {
   type NormalizedTransactionError,
 } from "./transaction";
 
-export type WalletProviderId = "freighter" | "albedo";
+export type WalletProviderId = string;
 
 export interface WalletState {
   status: "disconnected" | "connecting" | "connected" | "error";
   address?: string;
   selectedWalletId?: WalletProviderId;
+  selectedWalletName?: string;
   networkPassphrase: string;
   error?: NormalizedTransactionError;
 }
@@ -74,32 +69,58 @@ export interface SupportedWallet {
   supportsSorobanAuthEntries: boolean;
 }
 
-interface FreighterApiError {
-  code: number;
-  message: string;
-  ext?: string[];
+export interface ConnectedWallet {
+  address: string;
+  walletName: string;
+  /**
+   * Optional for backwards-compatible consumers, but populated by
+   * `connectWallet` for every successful Stellar Wallets Kit connection.
+   */
+  walletId?: WalletProviderId;
 }
 
-const WALLET_NAMES: Readonly<Record<WalletProviderId, string>> = {
-  freighter: "Freighter",
-  albedo: "Albedo",
-};
+interface SelectedWallet {
+  id: string;
+  name: string;
+}
+
+// Stellar Wallets Kit 2.5 does not expose a capability flag and several
+// modules implement signAuthEntry only to reject it. Keep this conservative.
+const SOROBAN_AUTH_ENTRY_WALLET_IDS = new Set([
+  "cactuslink",
+  "dcent",
+  "freighter",
+  "hana",
+  "klever",
+  "onekey",
+]);
 
 export class StellarWalletAdapter {
   private state: WalletState;
   private readonly listeners = new Set<() => void>();
   private readonly expectedNetworkPassphrase: string;
+  private readonly modules: ModuleInterface[];
   private connectionGeneration = 0;
 
   constructor(options: WalletAdapterOptions) {
     if (!options.networkPassphrase.trim()) {
       throw new Error("A Stellar network passphrase is required.");
     }
+
     this.expectedNetworkPassphrase = options.networkPassphrase;
+    this.modules = defaultModules();
     this.state = {
       status: "disconnected",
       networkPassphrase: options.networkPassphrase,
     };
+
+    StellarWalletsKit.init({
+      modules: this.modules,
+      network: options.networkPassphrase as WalletKitNetwork,
+      authModal: {
+        hideUnsupportedWallets: options.hideUnsupportedWallets ?? true,
+      },
+    });
   }
 
   getSnapshot = (): WalletState => ({ ...this.state });
@@ -112,20 +133,23 @@ export class StellarWalletAdapter {
   async connect(walletId?: string): Promise<WalletState> {
     const generation = ++this.connectionGeneration;
     this.patchState({ status: "connecting", error: undefined });
+
     try {
-      const provider = walletId
-        ? parseWalletProviderId(walletId)
-        : await this.preferredProvider();
-      const address =
-        provider === "freighter"
-          ? await this.connectFreighter()
-          : await this.connectAlbedo();
+      const { address } = walletId
+        ? await this.connectSelectedWallet(walletId)
+        : await StellarWalletsKit.authModal();
       this.assertCurrentConnection(generation);
       this.assertValidAccountAddress(address);
+
+      const selectedWallet = this.getSelectedWallet();
+      await this.assertKitNetwork();
+      this.assertCurrentConnection(generation);
+
       this.patchState({
         status: "connected",
         address,
-        selectedWalletId: provider,
+        selectedWalletId: selectedWallet.id,
+        selectedWalletName: selectedWallet.name,
         networkPassphrase: this.expectedNetworkPassphrase,
         error: undefined,
       });
@@ -134,36 +158,37 @@ export class StellarWalletAdapter {
       if (generation !== this.connectionGeneration) {
         throw new Error("The wallet connection was cancelled.", { cause });
       }
+
+      const error = normalizeWalletKitError(cause);
       this.patchState({
         status: "error",
-        error: normalizeTransactionError(cause),
+        error: normalizeTransactionError(error),
         address: undefined,
         selectedWalletId: undefined,
+        selectedWalletName: undefined,
       });
-      throw cause;
+      throw error;
     }
   }
 
   async restore(): Promise<WalletState> {
     const generation = ++this.connectionGeneration;
     try {
-      if (!(await this.freighterIsAvailable())) {
-        if (generation !== this.connectionGeneration) {
-          return this.getSnapshot();
-        }
-        return this.markDisconnected();
-      }
-      const result = await getFreighterAddress();
-      throwFreighterError("Freighter could not restore the account", result.error);
-      this.assertValidAccountAddress(result.address);
-      await this.assertFreighterNetwork();
+      const { address } = await StellarWalletsKit.getAddress();
+      this.assertCurrentConnection(generation);
+      this.assertValidAccountAddress(address);
+
+      const selectedWallet = this.getSelectedWallet();
+      await this.assertKitNetwork();
       if (generation !== this.connectionGeneration) {
         return this.getSnapshot();
       }
+
       this.patchState({
         status: "connected",
-        address: result.address,
-        selectedWalletId: "freighter",
+        address,
+        selectedWalletId: selectedWallet.id,
+        selectedWalletName: selectedWallet.name,
         networkPassphrase: this.expectedNetworkPassphrase,
         error: undefined,
       });
@@ -177,184 +202,151 @@ export class StellarWalletAdapter {
   }
 
   async disconnect(): Promise<void> {
-    const snapshot = this.getSnapshot();
     this.connectionGeneration += 1;
-    if (snapshot.selectedWalletId === "albedo" && snapshot.address) {
-      albedo.forgetImplicitSession(snapshot.address);
+    let disconnectError: Error | undefined;
+    try {
+      await StellarWalletsKit.disconnect();
+    } catch (cause) {
+      disconnectError = normalizeWalletKitError(cause);
+    } finally {
+      this.markDisconnected();
     }
-    this.markDisconnected();
+    if (disconnectError) {
+      throw disconnectError;
+    }
   }
 
   async listWallets(): Promise<SupportedWallet[]> {
-    return [
-      {
-        id: "freighter",
-        name: WALLET_NAMES.freighter,
-        description:
-          "Browser extension with full Stellar and Soroban signing support.",
-        isAvailable: await this.freighterIsAvailable(),
-        supportsSorobanAuthEntries: true,
-      },
-      {
-        id: "albedo",
-        name: WALLET_NAMES.albedo,
-        description:
-          "Web wallet for root-source Stellar transaction signatures.",
-        isAvailable: typeof window !== "undefined",
-        supportsSorobanAuthEntries: false,
-      },
-    ];
+    try {
+      const supportedWallets =
+        await StellarWalletsKit.refreshSupportedWallets();
+      return supportedWallets.map((wallet) => ({
+        id: wallet.id,
+        name: wallet.name,
+        description: wallet.url
+          ? `${wallet.name} wallet (${wallet.url})`
+          : `${wallet.name} wallet via Stellar Wallets Kit.`,
+        isAvailable: wallet.isAvailable,
+        supportsSorobanAuthEntries:
+          SOROBAN_AUTH_ENTRY_WALLET_IDS.has(wallet.id),
+      }));
+    } catch (cause) {
+      throw normalizeWalletKitError(cause);
+    }
   }
 
   readonly signTransaction: ContractSignTransaction = async (
     xdr,
     options,
   ) => {
-    const address = this.requireConnectedAddress(options?.address);
-    this.assertSigningNetwork(options?.networkPassphrase);
-    const provider = this.requireSelectedProvider();
+    try {
+      const address = this.requireConnectedAddress(options?.address);
+      this.assertSigningNetwork(options?.networkPassphrase);
+      this.assertSelectedWallet();
+      await this.assertKitNetwork();
 
-    if (provider === "freighter") {
-      await this.assertFreighterNetwork();
-      const result = await signFreighterTransaction(xdr, {
-        networkPassphrase: this.expectedNetworkPassphrase,
-        address,
-      });
-      throwFreighterError(
-        "Freighter could not sign the transaction",
-        result.error,
+      const result = await StellarWalletsKit.signTransaction(
+        xdr,
+        signingOptions(this.expectedNetworkPassphrase, address, options?.path),
       );
       if (!result.signedTxXdr) {
         throw new Error(
-          "Freighter returned an empty signed transaction envelope.",
+          "The wallet returned an empty signed transaction envelope.",
         );
       }
-      this.assertSignerAddress(result.signerAddress, address, "Freighter");
-      this.assertSignedTransactionMatches(
-        xdr,
-        result.signedTxXdr,
-        "Freighter",
-      );
+      this.assertSignerAddress(result.signerAddress, address);
+      this.assertSignedTransactionMatches(xdr, result.signedTxXdr);
       return {
         signedTxXdr: result.signedTxXdr,
         signerAddress: result.signerAddress,
       };
+    } catch (cause) {
+      throw normalizeWalletKitError(cause);
     }
-
-    this.assertAlbedoRootSourceTransaction(xdr, address);
-    const result = await albedo.tx({
-      xdr,
-      pubkey: address,
-      network: albedoNetwork(this.expectedNetworkPassphrase),
-      submit: false,
-    });
-    if (!result.signed_envelope_xdr) {
-      throw new Error("Albedo returned an empty signed transaction envelope.");
-    }
-    this.assertSignedTransactionMatches(
-      xdr,
-      result.signed_envelope_xdr,
-      "Albedo",
-    );
-    this.assertAlbedoRootSourceTransaction(
-      result.signed_envelope_xdr,
-      address,
-    );
-    return {
-      signedTxXdr: result.signed_envelope_xdr,
-      signerAddress: address,
-    };
   };
 
   readonly signAuthEntry: ContractSignAuthEntry = async (
     authEntry,
     options,
   ) => {
-    const address = this.requireConnectedAddress(options?.address);
-    this.assertSigningNetwork(options?.networkPassphrase);
-    const provider = this.requireSelectedProvider();
+    try {
+      const address = this.requireConnectedAddress(options?.address);
+      this.assertSigningNetwork(options?.networkPassphrase);
+      this.assertSelectedWallet();
+      await this.assertKitNetwork();
 
-    if (provider !== "freighter") {
-      throw new Error(
-        "Albedo cannot sign Soroban authorization entries. Connect Freighter for this contract action.",
+      const result = await StellarWalletsKit.signAuthEntry(
+        authEntry,
+        signingOptions(this.expectedNetworkPassphrase, address, options?.path),
       );
+      if (!result.signedAuthEntry) {
+        throw new Error(
+          "The wallet returned an empty Soroban authorization entry.",
+        );
+      }
+      this.assertSignerAddress(result.signerAddress, address);
+      return {
+        signedAuthEntry: result.signedAuthEntry,
+        signerAddress: result.signerAddress,
+      };
+    } catch (cause) {
+      throw normalizeWalletKitError(cause);
     }
-
-    await this.assertFreighterNetwork();
-    const result = await signFreighterAuthEntry(authEntry, {
-      networkPassphrase: this.expectedNetworkPassphrase,
-      address,
-    });
-    throwFreighterError(
-      "Freighter could not sign the Soroban authorization entry",
-      result.error,
-    );
-    if (!result.signedAuthEntry) {
-      throw new Error(
-        "Freighter returned an empty Soroban authorization entry.",
-      );
-    }
-    this.assertSignerAddress(result.signerAddress, address, "Freighter");
-    return {
-      signedAuthEntry: result.signedAuthEntry,
-      signerAddress: result.signerAddress,
-    };
   };
 
   dispose(): void {
+    this.connectionGeneration += 1;
     this.listeners.clear();
   }
 
-  private async preferredProvider(): Promise<WalletProviderId> {
-    return (await this.freighterIsAvailable()) ? "freighter" : "albedo";
+  private async connectSelectedWallet(
+    walletId: string,
+  ): Promise<{ address: string }> {
+    StellarWalletsKit.setWallet(walletId);
+    return StellarWalletsKit.fetchAddress();
   }
 
-  private async freighterIsAvailable(): Promise<boolean> {
-    try {
-      const result = await isFreighterConnected();
-      return !result.error && result.isConnected;
-    } catch {
-      return false;
-    }
-  }
-
-  private async connectFreighter(): Promise<string> {
-    if (!(await this.freighterIsAvailable())) {
+  private getSelectedWallet(): SelectedWallet {
+    const selectedModule = StellarWalletsKit.selectedModule;
+    if (
+      !selectedModule.productId.trim() ||
+      !selectedModule.productName.trim()
+    ) {
       throw new Error(
-        "Freighter is not installed or is unavailable in this browser.",
+        "Stellar Wallets Kit selected a wallet without a valid identity.",
       );
     }
-    const result = await requestFreighterAccess();
-    throwFreighterError("Freighter access failed", result.error);
-    await this.assertFreighterNetwork();
-    return result.address;
+    return {
+      id: selectedModule.productId,
+      name: selectedModule.productName,
+    };
   }
 
-  private async connectAlbedo(): Promise<string> {
-    if (typeof window === "undefined") {
-      throw new Error("Albedo is only available in a browser.");
+  private assertSelectedWallet(): void {
+    if (!this.state.selectedWalletId) {
+      throw new Error("The connected wallet provider is unavailable.");
     }
-    const challenge = secureChallenge();
-    const result = await albedo.publicKey({
-      token: challenge,
-      require_existing: true,
-    });
-    this.assertValidAccountAddress(result.pubkey);
-    await verifyAlbedoChallenge(
-      result.pubkey,
-      challenge,
-      result.signed_message,
-      result.signature,
-    );
-    return result.pubkey;
+    if (
+      StellarWalletsKit.selectedModule.productId !==
+      this.state.selectedWalletId
+    ) {
+      throw new Error(
+        "The active Stellar wallet no longer matches the connected wallet.",
+      );
+    }
   }
 
-  private async assertFreighterNetwork(): Promise<void> {
-    const details = await getFreighterNetworkDetails();
-    throwFreighterError(
-      "Freighter could not report its active network",
-      details.error,
-    );
+  private async assertKitNetwork(): Promise<void> {
+    const details = await StellarWalletsKit.getNetwork();
+    if (
+      !details ||
+      typeof details.networkPassphrase !== "string" ||
+      !details.networkPassphrase
+    ) {
+      throw new Error(
+        "The wallet returned an invalid Stellar network response.",
+      );
+    }
     if (details.networkPassphrase !== this.expectedNetworkPassphrase) {
       throw networkMismatch(
         this.expectedNetworkPassphrase,
@@ -363,46 +355,9 @@ export class StellarWalletAdapter {
     }
   }
 
-  private assertAlbedoRootSourceTransaction(
-    xdr: string,
-    address: string,
-  ): void {
-    let transaction;
-    try {
-      transaction = TransactionBuilder.fromXDR(
-        xdr,
-        this.expectedNetworkPassphrase,
-      );
-    } catch (cause) {
-      throw new Error(
-        "Refusing to send malformed transaction XDR to Albedo.",
-        { cause },
-      );
-    }
-    if (transaction instanceof FeeBumpTransaction) {
-      throw new Error(
-        "Albedo signing is limited to non-fee-bump root-source transactions.",
-      );
-    }
-    if (transaction.source !== address) {
-      throw new Error(
-        "Albedo can only sign a transaction whose root source matches the connected account.",
-      );
-    }
-    const mismatchedOperation = transaction.operations.some(
-      (operation) => operation.source && operation.source !== address,
-    );
-    if (mismatchedOperation) {
-      throw new Error(
-        "Albedo cannot sign a transaction containing a different operation source.",
-      );
-    }
-  }
-
   private assertSignedTransactionMatches(
     requestedXdr: string,
     signedXdr: string,
-    providerName: string,
   ): void {
     const requested = parseTransactionXdr(
       requestedXdr,
@@ -412,7 +367,7 @@ export class StellarWalletAdapter {
     const signed = parseTransactionXdr(
       signedXdr,
       this.expectedNetworkPassphrase,
-      `${providerName} returned malformed signed transaction XDR.`,
+      "The wallet returned malformed signed transaction XDR.",
     );
     const requestedEnvelopeType = requested.toEnvelope().switch().value;
     const signedEnvelopeType = signed.toEnvelope().switch().value;
@@ -421,7 +376,7 @@ export class StellarWalletAdapter {
       !equalBytes(requested.tx.toXDR(), signed.tx.toXDR())
     ) {
       throw new Error(
-        `${providerName} returned a signed transaction whose body differs from the requested transaction.`,
+        "The wallet returned a signed transaction whose body differs from the requested transaction.",
       );
     }
   }
@@ -445,13 +400,12 @@ export class StellarWalletAdapter {
   }
 
   private assertSignerAddress(
-    signerAddress: string,
+    signerAddress: string | undefined,
     expectedAddress: string,
-    providerName: string,
   ): void {
-    if (signerAddress !== expectedAddress) {
+    if (signerAddress && signerAddress !== expectedAddress) {
       throw new Error(
-        `${providerName} signed with an account other than the connected wallet.`,
+        "The wallet signed with an account other than the connected wallet.",
       );
     }
   }
@@ -468,13 +422,6 @@ export class StellarWalletAdapter {
     return this.state.address;
   }
 
-  private requireSelectedProvider(): WalletProviderId {
-    if (!this.state.selectedWalletId) {
-      throw new Error("The connected wallet provider is unavailable.");
-    }
-    return this.state.selectedWalletId;
-  }
-
   private assertCurrentConnection(generation: number): void {
     if (generation !== this.connectionGeneration) {
       throw new Error("The wallet connection was cancelled.");
@@ -486,6 +433,7 @@ export class StellarWalletAdapter {
       status: "disconnected",
       address: undefined,
       selectedWalletId: undefined,
+      selectedWalletName: undefined,
       networkPassphrase: this.expectedNetworkPassphrase,
       error: undefined,
     });
@@ -516,6 +464,12 @@ export function generatedClientOptions(
   if (snapshot.status !== "connected" || !snapshot.address) {
     throw new Error("Connect a wallet before creating a write-enabled client.");
   }
+  if (snapshot.networkPassphrase !== config.networkPassphrase) {
+    throw networkMismatch(
+      snapshot.networkPassphrase,
+      config.networkPassphrase,
+    );
+  }
   return {
     contractId: config.contractId,
     networkPassphrase: config.networkPassphrase,
@@ -530,24 +484,46 @@ export function generatedClientOptions(
 let defaultTestnetAdapter: StellarWalletAdapter | undefined;
 
 /**
- * Compatibility entry point for the app provider. The adapter prefers
- * Freighter when its extension is present, then falls back to Albedo.
+ * Compatibility entry point for the app provider. Without an explicit wallet
+ * id the official Stellar Wallets Kit authentication modal handles selection.
  */
-export async function connectWallet(): Promise<{
-  address: string;
-  walletName: string;
-}> {
+export async function connectWallet(
+  walletId?: string,
+): Promise<ConnectedWallet> {
   defaultTestnetAdapter ??= new StellarWalletAdapter({
     networkPassphrase: Networks.TESTNET,
   });
-  const connection = await defaultTestnetAdapter.connect();
-  if (!connection.address || !connection.selectedWalletId) {
-    throw new Error("The wallet connected without returning an address.");
+  const connection = await defaultTestnetAdapter.connect(walletId);
+  if (
+    !connection.address ||
+    !connection.selectedWalletId ||
+    !connection.selectedWalletName
+  ) {
+    throw new Error("The wallet connected without returning an identity.");
   }
   return {
     address: connection.address,
-    walletName: WALLET_NAMES[connection.selectedWalletId],
+    walletName: connection.selectedWalletName,
+    walletId: connection.selectedWalletId,
   };
+}
+
+export function getConnectedTestnetWalletAdapter(): StellarWalletAdapter {
+  if (!defaultTestnetAdapter) {
+    throw new Error("Connect a Testnet wallet before creating an adapter.");
+  }
+  const snapshot = defaultTestnetAdapter.getSnapshot();
+  if (
+    snapshot.status !== "connected" ||
+    !snapshot.address ||
+    !snapshot.selectedWalletId
+  ) {
+    throw new Error("Connect a Testnet wallet before creating an adapter.");
+  }
+  if (snapshot.networkPassphrase !== Networks.TESTNET) {
+    throw networkMismatch(Networks.TESTNET, snapshot.networkPassphrase);
+  }
+  return defaultTestnetAdapter;
 }
 
 export async function disconnectWallet(): Promise<void> {
@@ -570,30 +546,54 @@ export async function signConnectedTestnetTransaction(
   if (networkPassphrase !== Networks.TESTNET) {
     throw networkMismatch(Networks.TESTNET, networkPassphrase);
   }
-  return defaultTestnetAdapter.signTransaction(transactionXdr, {
+  return getConnectedTestnetWalletAdapter().signTransaction(transactionXdr, {
     networkPassphrase: Networks.TESTNET,
     address,
   });
 }
 
-function parseWalletProviderId(walletId: string): WalletProviderId {
-  if (walletId === "freighter" || walletId === "albedo") {
-    return walletId;
-  }
-  throw new Error(`Unsupported Stellar wallet provider: ${walletId}.`);
+function signingOptions(
+  networkPassphrase: string,
+  address: string,
+  path?: string,
+): {
+  networkPassphrase: string;
+  address: string;
+  path?: string;
+} {
+  return {
+    networkPassphrase,
+    address,
+    ...(path ? { path } : {}),
+  };
 }
 
-function throwFreighterError(
-  context: string,
-  error?: FreighterApiError,
-): void {
-  if (!error) {
-    return;
+function normalizeWalletKitError(cause: unknown): Error {
+  if (cause instanceof Error) {
+    return cause;
   }
-  throw Object.assign(new Error(`${context}: ${error.message}`), {
-    code: error.code,
-    ext: error.ext,
-  });
+
+  if (typeof cause === "string") {
+    return new Error(cause);
+  }
+
+  if (cause && typeof cause === "object") {
+    const record = cause as Record<string, unknown>;
+    const message =
+      typeof record.message === "string"
+        ? record.message
+        : "Unhandled error from the Stellar wallet.";
+    const error = new Error(message);
+    if (typeof record.code === "number") {
+      Object.assign(error, { code: record.code });
+    }
+    if (record.ext !== undefined) {
+      Object.assign(error, { ext: record.ext });
+    }
+    return error;
+  }
+
+  return new Error("Unhandled error from the Stellar wallet.");
 }
 
 function networkMismatch(
@@ -605,57 +605,6 @@ function networkMismatch(
     "The wallet is connected to a different Stellar network.",
     { details: { expected, received } },
   );
-}
-
-function albedoNetwork(passphrase: string): string {
-  if (passphrase === Networks.TESTNET) {
-    return "testnet";
-  }
-  if (passphrase === Networks.PUBLIC) {
-    return "public";
-  }
-  return passphrase;
-}
-
-function secureChallenge(): string {
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
-}
-
-async function verifyAlbedoChallenge(
-  publicKey: string,
-  challenge: string,
-  signedMessage: string,
-  signatureHex: string,
-): Promise<void> {
-  const expectedMessage = `${publicKey}:${challenge}`;
-  if (
-    signedMessage !== expectedMessage ||
-    !/^[0-9a-f]{128}$/i.test(signatureHex)
-  ) {
-    throw new Error("Albedo returned an invalid account-ownership proof.");
-  }
-  const signature = Uint8Array.from(
-    signatureHex.match(/.{2}/g) ?? [],
-    (byte) => Number.parseInt(byte, 16),
-  );
-  const verified = await verifyAsync(
-    signature,
-    await sha256Utf8(expectedMessage),
-    Uint8Array.from(StrKey.decodeEd25519PublicKey(publicKey)),
-    { zip215: false },
-  );
-  if (!verified) {
-    throw new Error("Albedo account-ownership proof verification failed.");
-  }
-}
-
-async function sha256Utf8(value: string): Promise<Uint8Array> {
-  const encoded = new TextEncoder().encode(value);
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", encoded));
 }
 
 function parseTransactionXdr(

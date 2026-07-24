@@ -1,12 +1,5 @@
-import albedo from "@albedo-link/intent";
-import {
-  getAddress,
-  getNetworkDetails,
-  isConnected,
-  requestAccess,
-  signAuthEntry,
-  signTransaction,
-} from "@stellar/freighter-api";
+import { defaultModules } from "@creit.tech/stellar-wallets-kit/modules/utils";
+import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk";
 import {
   Account,
   Asset,
@@ -16,8 +9,6 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import {
-  afterAll,
-  beforeAll,
   beforeEach,
   describe,
   expect,
@@ -25,56 +16,104 @@ import {
   vi,
 } from "vitest";
 
-import { EphemeralScannerSigner } from "../scanner-crypto";
+import { DEMO_BENEFICIARY_ADDRESS, DEMO_ORGANIZER_ADDRESS } from "../seed";
 import {
+  connectWallet,
+  disconnectWallet,
   generatedClientOptions,
+  getConnectedTestnetWalletAdapter,
+  signConnectedTestnetTransaction,
   StellarWalletAdapter,
 } from "../wallet";
-import { DEMO_BENEFICIARY_ADDRESS, DEMO_ORGANIZER_ADDRESS } from "../seed";
 
-vi.mock("@stellar/freighter-api", () => ({
-  getAddress: vi.fn(),
-  getNetworkDetails: vi.fn(),
-  isConnected: vi.fn(),
-  requestAccess: vi.fn(),
-  signAuthEntry: vi.fn(),
-  signTransaction: vi.fn(),
+const kitState = vi.hoisted(() => ({
+  selectedModule: {
+    productId: "freighter",
+    productName: "Freighter",
+  },
+  modules: [
+    {
+      productId: "freighter",
+      productName: "Freighter",
+      signAuthEntry: vi.fn(),
+    },
+    {
+      productId: "albedo",
+      productName: "Albedo",
+      signAuthEntry: vi.fn(),
+    },
+    {
+      productId: "xbull",
+      productName: "xBull",
+      signAuthEntry: vi.fn(),
+    },
+  ],
 }));
 
-vi.mock("@albedo-link/intent", () => ({
-  default: {
-    forgetImplicitSession: vi.fn(),
-    publicKey: vi.fn(),
-    tx: vi.fn(),
+const kitMocks = vi.hoisted(() => ({
+  init: vi.fn(),
+  setWallet: vi.fn(),
+  getAddress: vi.fn(),
+  fetchAddress: vi.fn(),
+  authModal: vi.fn(),
+  getNetwork: vi.fn(),
+  signTransaction: vi.fn(),
+  signAuthEntry: vi.fn(),
+  disconnect: vi.fn(),
+  refreshSupportedWallets: vi.fn(),
+  defaultModules: vi.fn(),
+}));
+
+vi.mock("@creit.tech/stellar-wallets-kit/modules/utils", () => ({
+  defaultModules: kitMocks.defaultModules,
+}));
+
+vi.mock("@creit.tech/stellar-wallets-kit/sdk", () => ({
+  StellarWalletsKit: {
+    init: kitMocks.init,
+    setWallet: kitMocks.setWallet,
+    getAddress: kitMocks.getAddress,
+    fetchAddress: kitMocks.fetchAddress,
+    authModal: kitMocks.authModal,
+    getNetwork: kitMocks.getNetwork,
+    signTransaction: kitMocks.signTransaction,
+    signAuthEntry: kitMocks.signAuthEntry,
+    disconnect: kitMocks.disconnect,
+    refreshSupportedWallets: kitMocks.refreshSupportedWallets,
+    get selectedModule() {
+      return kitState.selectedModule;
+    },
   },
 }));
 
-let albedoSigner: EphemeralScannerSigner;
 const ACCOUNT =
   "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57";
 const OTHER_ACCOUNT = DEMO_ORGANIZER_ADDRESS;
 const DESTINATION = DEMO_BENEFICIARY_ADDRESS;
 
-const mockedFreighterConnected = vi.mocked(isConnected);
-const mockedFreighterAddress = vi.mocked(getAddress);
-const mockedFreighterNetwork = vi.mocked(getNetworkDetails);
-const mockedFreighterAccess = vi.mocked(requestAccess);
-const mockedFreighterSignAuthEntry = vi.mocked(signAuthEntry);
-const mockedFreighterSignTransaction = vi.mocked(signTransaction);
-const mockedAlbedo = vi.mocked(albedo, true);
+const mockedDefaultModules = vi.mocked(defaultModules);
+const mockedInit = vi.mocked(StellarWalletsKit.init);
+const mockedSetWallet = vi.mocked(StellarWalletsKit.setWallet);
+const mockedGetAddress = vi.mocked(StellarWalletsKit.getAddress);
+const mockedFetchAddress = vi.mocked(StellarWalletsKit.fetchAddress);
+const mockedAuthModal = vi.mocked(StellarWalletsKit.authModal);
+const mockedGetNetwork = vi.mocked(StellarWalletsKit.getNetwork);
+const mockedSignTransaction = vi.mocked(
+  StellarWalletsKit.signTransaction,
+);
+const mockedSignAuthEntry = vi.mocked(StellarWalletsKit.signAuthEntry);
+const mockedDisconnect = vi.mocked(StellarWalletsKit.disconnect);
+const mockedRefreshSupportedWallets = vi.mocked(
+  StellarWalletsKit.refreshSupportedWallets,
+);
 
-function buildTransaction(
-  source = ACCOUNT,
-  operationSource?: string,
-  amount = "1",
-): string {
-  return new TransactionBuilder(new Account(source, "1"), {
+function buildTransaction(amount = "1"): string {
+  return new TransactionBuilder(new Account(ACCOUNT, "1"), {
     fee: "100",
     networkPassphrase: Networks.TESTNET,
   })
     .addOperation(
       Operation.payment({
-        source: operationSource,
         destination: DESTINATION,
         asset: Asset.native(),
         amount,
@@ -99,80 +138,132 @@ function withDummySignature(transactionXdr: string): string {
   return transaction.toXDR();
 }
 
-function mockFreighterNetwork(
-  networkPassphrase = Networks.TESTNET,
-): void {
-  mockedFreighterNetwork.mockResolvedValue({
-    network: networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
-    networkUrl: "https://horizon-testnet.stellar.org",
-    networkPassphrase,
-    sorobanRpcUrl: "https://soroban-testnet.stellar.org",
-  });
-}
-
-beforeAll(async () => {
-  albedoSigner = await EphemeralScannerSigner.fromPrivateKey(
-    new Uint8Array(32).fill(7),
-  );
-});
-
-afterAll(() => {
-  albedoSigner.destroy();
-});
-
 beforeEach(() => {
   vi.clearAllMocks();
-  mockedFreighterConnected.mockResolvedValue({ isConnected: false });
-  mockedFreighterAddress.mockResolvedValue({ address: ACCOUNT });
-  mockedFreighterAccess.mockResolvedValue({ address: ACCOUNT });
-  mockFreighterNetwork();
-  mockedAlbedo.publicKey.mockImplementation(async ({ token }) => {
-    const signedMessage = `${ACCOUNT}:${token}`;
-    return {
-      pubkey: ACCOUNT,
-      signed_message: signedMessage,
-      signature: Array.from(
-        await albedoSigner.sign(await sha256Utf8(signedMessage)),
-        (byte) => byte.toString(16).padStart(2, "0"),
-      ).join(""),
+  kitState.selectedModule = {
+    productId: "freighter",
+    productName: "Freighter",
+  };
+  mockedDefaultModules.mockReturnValue(
+    kitState.modules as unknown as ReturnType<typeof defaultModules>,
+  );
+  mockedSetWallet.mockImplementation((walletId) => {
+    kitState.selectedModule = {
+      productId: walletId,
+      productName:
+        walletId === "freighter" ? "Freighter" : "Custom Wallet",
     };
   });
+  mockedAuthModal.mockResolvedValue({ address: ACCOUNT });
+  mockedGetAddress.mockResolvedValue({ address: ACCOUNT });
+  mockedFetchAddress.mockResolvedValue({ address: ACCOUNT });
+  mockedGetNetwork.mockResolvedValue({
+    network: "TESTNET",
+    networkPassphrase: Networks.TESTNET,
+  });
+  mockedDisconnect.mockResolvedValue();
+  mockedRefreshSupportedWallets.mockResolvedValue([
+    {
+      id: "freighter",
+      name: "Freighter",
+      type: "HOT_WALLET",
+      icon: "freighter.svg",
+      url: "https://freighter.app",
+      isAvailable: true,
+      isPlatformWrapper: false,
+    },
+    {
+      id: "albedo",
+      name: "Albedo",
+      type: "HOT_WALLET",
+      icon: "albedo.svg",
+      url: "https://albedo.link",
+      isAvailable: true,
+      isPlatformWrapper: false,
+    },
+    {
+      id: "xbull",
+      name: "xBull",
+      type: "HOT_WALLET",
+      icon: "xbull.svg",
+      url: "https://xbull.app",
+      isAvailable: true,
+      isPlatformWrapper: false,
+    },
+  ]);
 });
 
-async function sha256Utf8(value: string): Promise<Uint8Array> {
-  const encoded = new TextEncoder().encode(value);
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", encoded));
-}
-
 describe("StellarWalletAdapter", () => {
-  it("prefers Freighter and signs transactions and Soroban auth entries", async () => {
-    mockedFreighterConnected.mockResolvedValue({ isConnected: true });
-    const transactionXdr = buildTransaction();
-    const signedTransactionXdr = withDummySignature(transactionXdr);
-    mockedFreighterSignTransaction.mockResolvedValue({
-      signedTxXdr: signedTransactionXdr,
+  it("initializes the kit and uses authModal when no wallet id is supplied", async () => {
+    kitState.selectedModule = {
+      productId: "wallet-connect",
+      productName: "LOBSTR Mobile",
+    };
+    const adapter = new StellarWalletAdapter({
+      networkPassphrase: Networks.TESTNET,
+      hideUnsupportedWallets: false,
+    });
+
+    await expect(adapter.connect()).resolves.toMatchObject({
+      status: "connected",
+      address: ACCOUNT,
+      selectedWalletId: "wallet-connect",
+      selectedWalletName: "LOBSTR Mobile",
+      networkPassphrase: Networks.TESTNET,
+    });
+
+    expect(mockedDefaultModules).toHaveBeenCalledOnce();
+    expect(mockedInit).toHaveBeenCalledWith({
+      modules: kitState.modules,
+      network: Networks.TESTNET,
+      authModal: { hideUnsupportedWallets: false },
+    });
+    expect(mockedAuthModal).toHaveBeenCalledOnce();
+    expect(mockedSetWallet).not.toHaveBeenCalled();
+    expect(mockedGetNetwork).toHaveBeenCalledOnce();
+  });
+
+  it("supports an arbitrary toolkit wallet id through explicit selection", async () => {
+    const adapter = new StellarWalletAdapter({
+      networkPassphrase: Networks.TESTNET,
+    });
+
+    await expect(adapter.connect("cactus-link")).resolves.toMatchObject({
+      status: "connected",
+      address: ACCOUNT,
+      selectedWalletId: "cactus-link",
+      selectedWalletName: "Custom Wallet",
+    });
+
+    expect(mockedSetWallet).toHaveBeenCalledWith("cactus-link");
+    expect(mockedFetchAddress).toHaveBeenCalledOnce();
+    expect(mockedAuthModal).not.toHaveBeenCalled();
+  });
+
+  it("signs transactions and auth entries through the kit with strict checks", async () => {
+    const requestedXdr = buildTransaction();
+    const signedXdr = withDummySignature(requestedXdr);
+    mockedSignTransaction.mockResolvedValue({
+      signedTxXdr: signedXdr,
       signerAddress: ACCOUNT,
     });
-    mockedFreighterSignAuthEntry.mockResolvedValue({
+    mockedSignAuthEntry.mockResolvedValue({
       signedAuthEntry: "signed-auth-entry",
       signerAddress: ACCOUNT,
     });
     const adapter = new StellarWalletAdapter({
       networkPassphrase: Networks.TESTNET,
     });
+    await adapter.connect();
 
-    await expect(adapter.connect()).resolves.toMatchObject({
-      status: "connected",
-      address: ACCOUNT,
-      selectedWalletId: "freighter",
-    });
     await expect(
-      adapter.signTransaction(transactionXdr, {
+      adapter.signTransaction(requestedXdr, {
         networkPassphrase: Networks.TESTNET,
         address: ACCOUNT,
+        path: "44'/148'/0'",
       }),
     ).resolves.toEqual({
-      signedTxXdr: signedTransactionXdr,
+      signedTxXdr: signedXdr,
       signerAddress: ACCOUNT,
     });
     await expect(
@@ -182,27 +273,23 @@ describe("StellarWalletAdapter", () => {
       signerAddress: ACCOUNT,
     });
 
-    expect(mockedFreighterNetwork).toHaveBeenCalledTimes(3);
-    expect(mockedFreighterSignTransaction).toHaveBeenCalledWith(
-      transactionXdr,
-      {
-        networkPassphrase: Networks.TESTNET,
-        address: ACCOUNT,
-      },
-    );
-    expect(mockedFreighterSignAuthEntry).toHaveBeenCalledWith(
-      "auth-entry-xdr",
-      {
-        networkPassphrase: Networks.TESTNET,
-        address: ACCOUNT,
-      },
-    );
-    expect(mockedAlbedo.publicKey).not.toHaveBeenCalled();
+    expect(mockedSignTransaction).toHaveBeenCalledWith(requestedXdr, {
+      networkPassphrase: Networks.TESTNET,
+      address: ACCOUNT,
+      path: "44'/148'/0'",
+    });
+    expect(mockedSignAuthEntry).toHaveBeenCalledWith("auth-entry-xdr", {
+      networkPassphrase: Networks.TESTNET,
+      address: ACCOUNT,
+    });
+    expect(mockedGetNetwork).toHaveBeenCalledTimes(3);
   });
 
-  it("fails closed when Freighter reports a different network", async () => {
-    mockedFreighterConnected.mockResolvedValue({ isConnected: true });
-    mockFreighterNetwork(Networks.PUBLIC);
+  it("fails closed when the selected wallet reports another network", async () => {
+    mockedGetNetwork.mockResolvedValue({
+      network: "PUBLIC",
+      networkPassphrase: Networks.PUBLIC,
+    });
     const adapter = new StellarWalletAdapter({
       networkPassphrase: Networks.TESTNET,
     });
@@ -220,50 +307,28 @@ describe("StellarWalletAdapter", () => {
       selectedWalletId: undefined,
       error: { category: "configuration", retryable: false },
     });
-    expect(mockedAlbedo.publicKey).not.toHaveBeenCalled();
   });
 
-  it("falls back to Albedo for root-source transaction signing", async () => {
-    const transactionXdr = buildTransaction();
-    const signedTransactionXdr = withDummySignature(transactionXdr);
-    mockedAlbedo.tx.mockResolvedValue({
-      xdr: transactionXdr,
-      tx_hash: "deadbeef",
-      signed_envelope_xdr: signedTransactionXdr,
-      network: "testnet",
-      result: {},
-    });
+  it("rechecks the network before signing and never invokes a mismatched wallet", async () => {
     const adapter = new StellarWalletAdapter({
       networkPassphrase: Networks.TESTNET,
     });
+    await adapter.connect();
+    mockedGetNetwork.mockResolvedValue({
+      network: "PUBLIC",
+      networkPassphrase: Networks.PUBLIC,
+    });
 
-    await expect(adapter.connect()).resolves.toMatchObject({
-      status: "connected",
-      address: ACCOUNT,
-      selectedWalletId: "albedo",
-    });
     await expect(
-      adapter.signTransaction(transactionXdr),
-    ).resolves.toEqual({
-      signedTxXdr: signedTransactionXdr,
-      signerAddress: ACCOUNT,
-    });
-    expect(mockedAlbedo.tx).toHaveBeenCalledWith({
-      xdr: transactionXdr,
-      pubkey: ACCOUNT,
-      network: "testnet",
-      submit: false,
-    });
+      adapter.signTransaction(buildTransaction()),
+    ).rejects.toMatchObject({ name: "NetworkMismatch" });
+    expect(mockedSignTransaction).not.toHaveBeenCalled();
   });
 
-  it("rejects a same-source transaction body substituted by Freighter", async () => {
-    mockedFreighterConnected.mockResolvedValue({ isConnected: true });
+  it("rejects a signed envelope whose transaction body was substituted", async () => {
     const requestedXdr = buildTransaction();
-    const substitutedXdr = withDummySignature(
-      buildTransaction(ACCOUNT, undefined, "2"),
-    );
-    mockedFreighterSignTransaction.mockResolvedValue({
-      signedTxXdr: substitutedXdr,
+    mockedSignTransaction.mockResolvedValue({
+      signedTxXdr: withDummySignature(buildTransaction("2")),
       signerAddress: ACCOUNT,
     });
     const adapter = new StellarWalletAdapter({
@@ -272,79 +337,64 @@ describe("StellarWalletAdapter", () => {
     await adapter.connect();
 
     await expect(adapter.signTransaction(requestedXdr)).rejects.toThrow(
-      "Freighter returned a signed transaction whose body differs",
+      "signed transaction whose body differs",
     );
   });
 
-  it("rejects a same-source transaction body substituted by Albedo", async () => {
+  it("rejects a signer address that differs from the connected account", async () => {
     const requestedXdr = buildTransaction();
-    const substitutedXdr = withDummySignature(
-      buildTransaction(ACCOUNT, undefined, "2"),
-    );
-    mockedAlbedo.tx.mockResolvedValue({
-      xdr: requestedXdr,
-      tx_hash: "deadbeef",
-      signed_envelope_xdr: substitutedXdr,
-      network: "testnet",
-      result: {},
+    mockedSignTransaction.mockResolvedValue({
+      signedTxXdr: withDummySignature(requestedXdr),
+      signerAddress: OTHER_ACCOUNT,
+    });
+    mockedSignAuthEntry.mockResolvedValue({
+      signedAuthEntry: "signed-auth-entry",
+      signerAddress: OTHER_ACCOUNT,
     });
     const adapter = new StellarWalletAdapter({
       networkPassphrase: Networks.TESTNET,
     });
-    await adapter.connect("albedo");
+    await adapter.connect();
 
     await expect(adapter.signTransaction(requestedXdr)).rejects.toThrow(
-      "Albedo returned a signed transaction whose body differs",
+      "account other than the connected wallet",
     );
-  });
-
-  it("rejects an Albedo account response not bound to the fresh challenge", async () => {
-    mockedAlbedo.publicKey.mockResolvedValue({
-      pubkey: ACCOUNT,
-      signed_message: `${ACCOUNT}:stale-challenge`,
-      signature: "00".repeat(64),
-    });
-    const adapter = new StellarWalletAdapter({
-      networkPassphrase: Networks.TESTNET,
-    });
-
-    await expect(adapter.connect("albedo")).rejects.toThrow(
-      "invalid account-ownership proof",
-    );
-    expect(adapter.getSnapshot()).toMatchObject({
-      status: "error",
-      address: undefined,
-      selectedWalletId: undefined,
-    });
-  });
-
-  it("refuses Albedo auth entries and non-root or mixed-source transactions", async () => {
-    const adapter = new StellarWalletAdapter({
-      networkPassphrase: Networks.TESTNET,
-    });
-    await adapter.connect("albedo");
-
     await expect(adapter.signAuthEntry("auth-entry-xdr")).rejects.toThrow(
-      "Albedo cannot sign Soroban authorization entries",
+      "account other than the connected wallet",
     );
-    await expect(
-      adapter.signTransaction(buildTransaction(OTHER_ACCOUNT)),
-    ).rejects.toThrow(
-      "root source matches the connected account",
-    );
-    await expect(
-      adapter.signTransaction(buildTransaction(ACCOUNT, OTHER_ACCOUNT)),
-    ).rejects.toThrow(
-      "different operation source",
-    );
-    expect(mockedAlbedo.tx).not.toHaveBeenCalled();
   });
 
-  it("checks the requested network and signer before invoking a provider", async () => {
+  it("accepts toolkit signatures when the wallet omits its optional signer address", async () => {
+    const requestedXdr = buildTransaction();
+    const signedXdr = withDummySignature(requestedXdr);
+    mockedSignTransaction.mockResolvedValue({
+      signedTxXdr: signedXdr,
+    });
+    mockedSignAuthEntry.mockResolvedValue({
+      signedAuthEntry: "signed-auth-entry",
+    });
     const adapter = new StellarWalletAdapter({
       networkPassphrase: Networks.TESTNET,
     });
-    await adapter.connect("albedo");
+    await adapter.connect();
+
+    await expect(adapter.signTransaction(requestedXdr)).resolves.toEqual({
+      signedTxXdr: signedXdr,
+      signerAddress: undefined,
+    });
+    await expect(
+      adapter.signAuthEntry("auth-entry-xdr"),
+    ).resolves.toEqual({
+      signedAuthEntry: "signed-auth-entry",
+      signerAddress: undefined,
+    });
+  });
+
+  it("checks requested signing network and address before calling the kit", async () => {
+    const adapter = new StellarWalletAdapter({
+      networkPassphrase: Networks.TESTNET,
+    });
+    await adapter.connect();
 
     await expect(
       adapter.signTransaction(buildTransaction(), {
@@ -358,11 +408,38 @@ describe("StellarWalletAdapter", () => {
     ).rejects.toThrow(
       "requested signer does not match the connected wallet",
     );
-    expect(mockedAlbedo.tx).not.toHaveBeenCalled();
+    expect(mockedSignTransaction).not.toHaveBeenCalled();
   });
 
-  it("restores only a verified Freighter session and clears local state", async () => {
-    mockedFreighterConnected.mockResolvedValue({ isConnected: true });
+  it("normalizes plain toolkit rejection objects without losing their code", async () => {
+    mockedAuthModal.mockRejectedValue({
+      code: -1,
+      message: "The user closed the modal.",
+      ext: "auth-modal",
+    });
+    const adapter = new StellarWalletAdapter({
+      networkPassphrase: Networks.TESTNET,
+    });
+
+    await expect(adapter.connect()).rejects.toMatchObject({
+      code: -1,
+      message: "The user closed the modal.",
+      ext: "auth-modal",
+    });
+    expect(adapter.getSnapshot()).toMatchObject({
+      status: "error",
+      error: {
+        category: "wallet-rejected",
+        retryable: true,
+      },
+    });
+  });
+
+  it("restores a cached kit address only after validating its network", async () => {
+    kitState.selectedModule = {
+      productId: "hana",
+      productName: "Hana",
+    };
     const adapter = new StellarWalletAdapter({
       networkPassphrase: Networks.TESTNET,
     });
@@ -370,25 +447,38 @@ describe("StellarWalletAdapter", () => {
     await expect(adapter.restore()).resolves.toMatchObject({
       status: "connected",
       address: ACCOUNT,
-      selectedWalletId: "freighter",
+      selectedWalletId: "hana",
+      selectedWalletName: "Hana",
     });
+    expect(mockedGetAddress).toHaveBeenCalledOnce();
+    expect(mockedGetNetwork).toHaveBeenCalledOnce();
+  });
+
+  it("disconnects the kit and clears local connection state", async () => {
+    const adapter = new StellarWalletAdapter({
+      networkPassphrase: Networks.TESTNET,
+    });
+    await adapter.connect();
+
     await adapter.disconnect();
+
+    expect(mockedDisconnect).toHaveBeenCalledOnce();
     expect(adapter.getSnapshot()).toMatchObject({
       status: "disconnected",
       address: undefined,
       selectedWalletId: undefined,
+      selectedWalletName: undefined,
     });
   });
 
-  it("does not reconnect when Freighter access resolves after disconnect", async () => {
-    mockedFreighterConnected.mockResolvedValue({ isConnected: true });
-    let resolveAccess:
-      | ((value: Awaited<ReturnType<typeof requestAccess>>) => void)
+  it("does not reconnect when authModal resolves after disconnect", async () => {
+    let resolveAuth:
+      | ((value: { address: string }) => void)
       | undefined;
-    mockedFreighterAccess.mockImplementation(
+    mockedAuthModal.mockImplementation(
       () =>
         new Promise((resolve) => {
-          resolveAccess = resolve;
+          resolveAuth = resolve;
         }),
     );
     const adapter = new StellarWalletAdapter({
@@ -396,9 +486,9 @@ describe("StellarWalletAdapter", () => {
     });
 
     const connecting = adapter.connect();
-    await vi.waitFor(() => expect(mockedFreighterAccess).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(mockedAuthModal).toHaveBeenCalledOnce());
     await adapter.disconnect();
-    resolveAccess?.({ address: ACCOUNT });
+    resolveAuth?.({ address: ACCOUNT });
 
     await expect(connecting).rejects.toThrow("connection was cancelled");
     expect(adapter.getSnapshot()).toMatchObject({
@@ -406,6 +496,34 @@ describe("StellarWalletAdapter", () => {
       address: undefined,
       selectedWalletId: undefined,
     });
+    expect(mockedGetNetwork).not.toHaveBeenCalled();
+  });
+
+  it("lists toolkit modules through the compatibility wallet shape", async () => {
+    const adapter = new StellarWalletAdapter({
+      networkPassphrase: Networks.TESTNET,
+    });
+
+    await expect(adapter.listWallets()).resolves.toEqual([
+      expect.objectContaining({
+        id: "freighter",
+        name: "Freighter",
+        isAvailable: true,
+        supportsSorobanAuthEntries: true,
+      }),
+      expect.objectContaining({
+        id: "albedo",
+        name: "Albedo",
+        isAvailable: true,
+        supportsSorobanAuthEntries: false,
+      }),
+      expect.objectContaining({
+        id: "xbull",
+        name: "xBull",
+        isAvailable: true,
+        supportsSorobanAuthEntries: false,
+      }),
+    ]);
   });
 
   it("exposes generated-client callbacks only after connection", async () => {
@@ -426,7 +544,13 @@ describe("StellarWalletAdapter", () => {
     expect(() => generatedClientOptions(config, adapter)).toThrow(
       "Connect a wallet",
     );
-    await adapter.connect("albedo");
+    await adapter.connect();
+    expect(() =>
+      generatedClientOptions(
+        { ...config, networkPassphrase: Networks.PUBLIC },
+        adapter,
+      ),
+    ).toThrow("different Stellar network");
     expect(generatedClientOptions(config, adapter)).toMatchObject({
       contractId: config.contractId,
       networkPassphrase: Networks.TESTNET,
@@ -437,27 +561,46 @@ describe("StellarWalletAdapter", () => {
       signAuthEntry: adapter.signAuthEntry,
     });
   });
+});
 
-  it("propagates Freighter API errors and refuses empty signatures", async () => {
-    mockedFreighterConnected.mockResolvedValue({ isConnected: true });
-    mockedFreighterSignTransaction.mockResolvedValue({
-      signedTxXdr: "",
-      signerAddress: "",
-      error: {
-        code: -4,
-        message: "User rejected the request",
-      },
-    });
-    const adapter = new StellarWalletAdapter({
-      networkPassphrase: Networks.TESTNET,
-    });
-    await adapter.connect();
+describe("Testnet compatibility exports", () => {
+  it("returns the connected adapter, product name, and selected wallet id", async () => {
+    expect(() => getConnectedTestnetWalletAdapter()).toThrow(
+      "Connect a Testnet wallet",
+    );
+    kitState.selectedModule = {
+      productId: "lobstr",
+      productName: "LOBSTR",
+    };
 
+    await expect(connectWallet()).resolves.toEqual({
+      address: ACCOUNT,
+      walletName: "LOBSTR",
+      walletId: "lobstr",
+    });
+    expect(getConnectedTestnetWalletAdapter()).toBeInstanceOf(
+      StellarWalletAdapter,
+    );
+
+    const requestedXdr = buildTransaction();
+    const signedXdr = withDummySignature(requestedXdr);
+    mockedSignTransaction.mockResolvedValue({
+      signedTxXdr: signedXdr,
+      signerAddress: ACCOUNT,
+    });
     await expect(
-      adapter.signTransaction(buildTransaction()),
-    ).rejects.toMatchObject({
-      code: -4,
-      message: expect.stringContaining("User rejected the request"),
+      signConnectedTestnetTransaction(requestedXdr, {
+        networkPassphrase: Networks.TESTNET,
+        address: ACCOUNT,
+      }),
+    ).resolves.toEqual({
+      signedTxXdr: signedXdr,
+      signerAddress: ACCOUNT,
     });
+
+    await disconnectWallet();
+    expect(() => getConnectedTestnetWalletAdapter()).toThrow(
+      "Connect a Testnet wallet",
+    );
   });
 });
