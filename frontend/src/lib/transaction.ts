@@ -16,6 +16,7 @@ export type TransactionPhase =
 
 export type TransactionErrorCategory =
   | "contract"
+  | "insufficient-balance"
   | "wallet-rejected"
   | "wallet"
   | "network"
@@ -118,7 +119,9 @@ export function normalizeTransactionError(
       };
     }
     const category =
-      cause.name === "InvalidVoucherSignature"
+      cause.name === "InsufficientBalance"
+        ? "insufficient-balance"
+        : cause.name === "InvalidVoucherSignature"
         ? "signature"
         : cause.name === "NetworkMismatch"
           ? "configuration"
@@ -126,7 +129,7 @@ export function normalizeTransactionError(
     return {
       category,
       message: cause.message,
-      retryable: false,
+      retryable: cause.name === "InsufficientBalance",
       cause,
     };
   }
@@ -164,6 +167,19 @@ export function normalizeTransactionError(
   }
 
   const lower = message.toLowerCase();
+  if (
+    /insufficient|underfunded|op_underfunded|low reserve|not enough (?:xlm|balance|funds)/.test(
+      lower,
+    )
+  ) {
+    return {
+      category: "insufficient-balance",
+      message:
+        "This Testnet account does not have enough available XLM for the network fee.",
+      retryable: true,
+      cause,
+    };
+  }
   if (
     /reject|declin|denied|cancelled by user|canceled by user|closed the modal/.test(
       lower,

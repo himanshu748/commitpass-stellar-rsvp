@@ -7,7 +7,15 @@ import {
 
 type TransactionStatusValue = {
   mode: "demo" | "contract";
-  status: "signing" | "submitting" | "confirmed" | "failed";
+  status:
+    | "simulating"
+    | "awaiting-signature"
+    | "signing"
+    | "submitted"
+    | "pending"
+    | "submitting"
+    | "confirmed"
+    | "failed";
   hash?: string;
   message: string;
 } | null;
@@ -22,6 +30,13 @@ export function TransactionStatus({
   const failed = transaction.status === "failed";
   const isDemo = transaction.mode === "demo";
   const Icon = confirmed ? CircleCheck : failed ? ShieldAlert : LoaderCircle;
+  const awaitingSignature =
+    transaction.status === "awaiting-signature" ||
+    transaction.status === "signing";
+  const waitingForLedger =
+    transaction.status === "submitted" ||
+    transaction.status === "pending" ||
+    transaction.status === "submitting";
 
   return (
     <div
@@ -31,8 +46,7 @@ export function TransactionStatus({
       <Icon
         size={21}
         className={
-          transaction.status === "signing" ||
-          transaction.status === "submitting"
+          !confirmed && !failed
             ? "spin"
             : undefined
         }
@@ -47,13 +61,21 @@ export function TransactionStatus({
               ? isDemo
                 ? "Demo step failed"
                 : "Transaction failed"
-              : transaction.status === "signing"
+              : awaitingSignature
                 ? isDemo
                   ? "Simulating authorization"
                   : "Waiting for signature"
-                : isDemo
+                : waitingForLedger
+                  ? isDemo
+                    ? "Advancing demo state"
+                    : "Pending on Testnet"
+                  : transaction.status === "simulating"
+                    ? isDemo
+                      ? "Preparing demo state"
+                      : "Simulating contract call"
+                    : isDemo
                   ? "Advancing demo state"
-                  : "Submitting transaction"}
+                  : "Preparing transaction"}
         </strong>
         <p>{transaction.message}</p>
         {transaction.hash && !isDemo ? (

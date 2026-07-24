@@ -1,3 +1,4 @@
+import type { ContractRuntimeConfig } from "./config";
 import type { CommitPassEvent, ReservationStatus } from "./domain";
 
 export const STELLAR_TESTNET_PASSPHRASE =
@@ -8,6 +9,27 @@ export const DEMO_CONTRACT_ID =
 
 export const XLM_TESTNET_SAC_ID =
   "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+export const PUBLIC_TESTNET_RPC_URL =
+  "https://soroban-testnet.stellar.org";
+
+export const PUBLIC_TESTNET_CONTRACT_ID =
+  "CBIT5JKA4XGV37FIIMXNSXQNHTYC52P7J65JO6J3QRYQ3YP3DIZPZRRN";
+
+export const PUBLIC_TESTNET_VERIFICATION_EVENT_ID =
+  "287273b2c9e628b24d70322796f89a989a557095b78ce275c7c019f0619be51f";
+
+export const PUBLIC_TESTNET_EVENT_CREATION_TX =
+  "f7e218954d1e4a75f5c6bbc8e6029b313592d37ab5301b7b7fa44c3e534ac83e";
+
+export const PUBLIC_TESTNET_CONFIG: ContractRuntimeConfig = {
+  mode: "contract",
+  network: "testnet",
+  networkPassphrase: STELLAR_TESTNET_PASSPHRASE,
+  rpcUrl: PUBLIC_TESTNET_RPC_URL,
+  contractId: PUBLIC_TESTNET_CONTRACT_ID,
+  xlmSacId: XLM_TESTNET_SAC_ID,
+};
 
 export const DEMO_ORGANIZER_ADDRESS =
   "GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H";

@@ -306,9 +306,12 @@ export async function calculateTestnetTransactionHash(
   // Construct the canonical signature payload explicitly because the SDK's
   // browser Buffer polyfill can come from a different realm than its bundled
   // hashing helper under strict browser/test isolation.
+  const encodedPassphrase = new TextEncoder().encode(Networks.TESTNET);
+  const passphraseInput = new Uint8Array(encodedPassphrase.byteLength);
+  passphraseInput.set(encodedPassphrase);
   const networkIdBytes = await globalThis.crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(Networks.TESTNET),
+    passphraseInput.buffer,
   );
   if (!(transaction.tx instanceof xdr.Transaction)) {
     throw new Error("The wallet unexpectedly replaced the Testnet payment.");
@@ -320,9 +323,12 @@ export async function calculateTestnetTransactionHash(
         transaction.tx,
       ),
   });
+  const encodedPayload = signaturePayload.toXDR();
+  const payloadInput = new Uint8Array(encodedPayload.byteLength);
+  payloadInput.set(encodedPayload);
   const digest = await globalThis.crypto.subtle.digest(
     "SHA-256",
-    Uint8Array.from(signaturePayload.toXDR()),
+    payloadInput.buffer,
   );
   return bytesToHex(new Uint8Array(digest));
 }

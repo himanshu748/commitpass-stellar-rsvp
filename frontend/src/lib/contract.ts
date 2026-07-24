@@ -569,6 +569,10 @@ export class GeneratedRefundableRsvpAdapter<
     emitStatus(options, "simulating");
     try {
       const transaction = await build();
+      // A generated client can surface a typed contract Err in the simulated
+      // result. Fail before opening a wallet prompt for a transaction that
+      // cannot succeed.
+      mapResult(transaction.result);
       emitStatus(options, "awaiting-signature");
       let hash: string | undefined;
       const sent = await transaction.signAndSend({

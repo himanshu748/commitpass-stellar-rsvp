@@ -23,10 +23,10 @@ jobs:
             packages/refundable-rsvp/package-lock.json
       - name: Build generated contract client
         working-directory: packages/refundable-rsvp
-        run: npm ci && npm run build
+        run: npm ci --ignore-scripts && npm run build
       - name: Install web dependencies
         working-directory: frontend
-        run: npm ci
+        run: npm ci --ignore-scripts
       - name: Unit tests
         working-directory: frontend
         run: npm test

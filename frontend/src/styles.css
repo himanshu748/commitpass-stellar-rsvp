@@ -558,6 +558,217 @@ ol {
   color: var(--ink);
 }
 
+.contract-proof {
+  display: grid;
+  gap: 12px;
+  padding: 15px;
+  border: 1px solid #a9bff8;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(21, 87, 255, 0.08), transparent 42%),
+    #ffffff;
+}
+
+.contract-proof__heading {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  grid-template-columns: 38px 1fr auto;
+}
+
+.contract-proof__icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 10px;
+  color: #ffffff;
+  background: var(--blue);
+}
+
+.contract-proof__heading > div {
+  display: grid;
+  gap: 1px;
+}
+
+.contract-proof__heading small,
+.wallet-proof__section-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.contract-proof__heading strong {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 15px;
+}
+
+.contract-proof__heading a,
+.contract-proof__historical {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.contract-proof__facts {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.contract-proof__facts div {
+  display: grid;
+  gap: 2px;
+  padding: 9px;
+  border-right: 1px solid var(--border);
+}
+
+.contract-proof__facts div:last-child {
+  border-right: 0;
+}
+
+.contract-proof__facts dt {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.contract-proof__facts dd {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.contract-proof__copy {
+  color: var(--body);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.contract-proof__copy code {
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.contract-read,
+.contract-sync {
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.contract-read {
+  display: grid;
+  grid-template-columns: 1fr auto;
+}
+
+.contract-read > div,
+.contract-sync {
+  color: var(--blue);
+}
+
+.contract-read > div,
+.contract-sync {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.contract-read span,
+.contract-sync span {
+  display: grid;
+  gap: 2px;
+  color: var(--ink);
+}
+
+.contract-read small,
+.contract-sync small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.contract-read strong,
+.contract-sync strong {
+  font-size: 11px;
+}
+
+.contract-sync {
+  display: flex;
+}
+
+.contract-sync--live {
+  border-color: #9fd9be;
+  color: var(--mint);
+  background: #f3fbf7;
+}
+
+.contract-sync--error {
+  border-color: #e6ada7;
+  color: var(--danger);
+  background: #fff7f6;
+}
+
+.contract-activity {
+  display: grid;
+  gap: 6px;
+}
+
+.contract-activity li {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.contract-activity li span {
+  display: grid;
+  gap: 1px;
+}
+
+.contract-activity strong {
+  color: var(--ink);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.contract-activity small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.contract-activity a {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--blue);
+  background: #eef3ff;
+}
+
+.wallet-proof__section-label {
+  padding-top: 4px;
+}
+
 .wallet-proof__form {
   display: grid;
   gap: 12px;
@@ -598,6 +809,21 @@ ol {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+@media (max-width: 480px) {
+  .contract-proof__facts {
+    grid-template-columns: 1fr;
+  }
+
+  .contract-proof__facts div {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .contract-proof__facts div:last-child {
+    border-bottom: 0;
+  }
 }
 
 /* Toast */

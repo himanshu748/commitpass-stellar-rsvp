@@ -1,12 +1,19 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createRefundableRsvpAdapter } from "../../lib/contract";
+import type { ContractEventPollerOptions } from "../../lib/contract-events";
 import {
   connectWallet,
   disconnectWallet as disconnectWalletModule,
+  getConnectedTestnetWalletAdapter,
 } from "../../lib/wallet";
 import { loadTestnetXlmBalance } from "../../lib/stellar-account";
+import {
+  PUBLIC_TESTNET_CONFIG,
+  PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+} from "../../lib/seed";
 import {
   CommitPassProvider,
   useCommitPass,
@@ -15,7 +22,39 @@ import {
 vi.mock("../../lib/wallet", () => ({
   connectWallet: vi.fn(),
   disconnectWallet: vi.fn(),
+  getConnectedTestnetWalletAdapter: vi.fn(),
   signConnectedTestnetTransaction: vi.fn(),
+}));
+
+const contractMocks = vi.hoisted(() => ({
+  createEvent: vi.fn(),
+  getEvent: vi.fn(),
+}));
+
+vi.mock("../../lib/contract", () => ({
+  createSecureEventSalt: vi.fn(() => "a".repeat(64)),
+  createRefundableRsvpAdapter: vi.fn(() => ({
+    getEvent: contractMocks.getEvent,
+    createEvent: contractMocks.createEvent,
+  })),
+}));
+
+const pollerMocks = vi.hoisted(() => ({
+  options: undefined as unknown,
+  start: vi.fn(),
+  stop: vi.fn(),
+  getCursor: vi.fn(),
+}));
+
+vi.mock("../../lib/contract-events", () => ({
+  createContractEventPoller: vi.fn((options) => {
+    pollerMocks.options = options;
+    return {
+      start: pollerMocks.start,
+      stop: pollerMocks.stop,
+      getCursor: pollerMocks.getCursor,
+    };
+  }),
 }));
 
 vi.mock("../../lib/stellar-account", () => ({
@@ -25,6 +64,35 @@ vi.mock("../../lib/stellar-account", () => ({
 
 const ACCOUNT =
   "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57";
+const OTHER_ACCOUNT =
+  "GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H";
+
+function contractEvent(
+  id = PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+  organizer = ACCOUNT,
+  scannerPublicKey = "d".repeat(64),
+) {
+  return {
+    id,
+    eventSalt: "a".repeat(64),
+    organizer,
+    metadataHash: "c".repeat(64),
+    startAt: 1_900_000_000,
+    checkInDeadline: 1_900_000_600,
+    endAt: 1_900_001_200,
+    token:
+      "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    depositAmount: 1n,
+    capacity: 1,
+    seatsReserved: 0,
+    outstandingDeposits: 0,
+    noShowBeneficiary: organizer,
+    cancellationPolicy: "FullRefund" as const,
+    scannerPublicKey,
+    status: "Active" as const,
+    createdAt: 1_800_000_000,
+  };
+}
 
 function WalletHarness() {
   const {
@@ -34,6 +102,10 @@ function WalletHarness() {
     connectDemoWallet,
     connectLiveWallet,
     disconnectWallet,
+    createLiveContractProof,
+    refreshLiveContractRead,
+    liveContractProof,
+    scannerPublicKey,
   } = useCommitPass();
 
   return (
@@ -45,6 +117,14 @@ function WalletHarness() {
           ? `|${testnetBalance.amount}`
           : ""}
       </output>
+      <output data-testid="proof-state">
+        {liveContractProof.transaction?.status ?? "idle"}|
+        {liveContractProof.targetEventId}|
+        {liveContractProof.event?.id ?? "none"}
+      </output>
+      <output data-testid="scanner-key">
+        {scannerPublicKey ?? "initializing"}
+      </output>
       <button type="button" onClick={() => void connectLiveWallet()}>
         Connect
       </button>
@@ -53,6 +133,12 @@ function WalletHarness() {
       </button>
       <button type="button" onClick={() => void disconnectWallet()}>
         Disconnect
+      </button>
+      <button type="button" onClick={() => void createLiveContractProof()}>
+        Create proof
+      </button>
+      <button type="button" onClick={() => void refreshLiveContractRead()}>
+        Refresh proof
       </button>
     </>
   );
@@ -67,6 +153,11 @@ describe("CommitPassProvider wallet lifecycle", () => {
     });
     vi.mocked(loadTestnetXlmBalance).mockResolvedValue("12.345");
     vi.mocked(disconnectWalletModule).mockResolvedValue();
+    vi.mocked(getConnectedTestnetWalletAdapter).mockReturnValue(
+      {} as ReturnType<typeof getConnectedTestnetWalletAdapter>,
+    );
+    contractMocks.getEvent.mockResolvedValue(contractEvent());
+    pollerMocks.options = undefined;
   });
 
   it("loads the Testnet balance after connection and delegates disconnect", async () => {
@@ -166,5 +257,155 @@ describe("CommitPassProvider wallet lifecycle", () => {
       "none|none|idle",
     );
     expect(loadTestnetXlmBalance).not.toHaveBeenCalled();
+  });
+
+  it("creates a fresh proof event, tracks its lifecycle, and reconciles only that event", async () => {
+    const user = userEvent.setup();
+    const proofEventId = "e".repeat(64);
+    let submittedScannerKey = "";
+    contractMocks.createEvent.mockImplementation(
+      async (
+        input: {
+          organizer: string;
+          scannerPublicKey: string;
+          token: string;
+          depositAmount: bigint;
+          capacity: number;
+          startAt: number;
+          checkInDeadline: number;
+          endAt: number;
+        },
+        options: {
+          onStatus?: (status: {
+            phase:
+              | "simulating"
+              | "awaiting-signature"
+              | "submitted"
+              | "pending"
+              | "confirmed";
+            message: string;
+            hash?: string;
+            updatedAt: number;
+          }) => void;
+        },
+      ) => {
+        submittedScannerKey = input.scannerPublicKey;
+        for (const phase of [
+          "simulating",
+          "awaiting-signature",
+          "submitted",
+          "pending",
+          "confirmed",
+        ] as const) {
+          options.onStatus?.({
+            phase,
+            message: phase,
+            hash: phase === "simulating" ? undefined : "f".repeat(64),
+            updatedAt: Date.now(),
+          });
+        }
+        return {
+          result: contractEvent(
+            proofEventId,
+            ACCOUNT,
+            input.scannerPublicKey,
+          ),
+          hash: "f".repeat(64),
+        };
+      },
+    );
+
+    render(
+      <CommitPassProvider>
+        <WalletHarness />
+      </CommitPassProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("scanner-key")).not.toHaveTextContent(
+        "initializing",
+      ),
+    );
+    const demoScannerKey = screen.getByTestId("scanner-key").textContent;
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-state")).toHaveTextContent(
+        `${ACCOUNT}|live|ready|12.345`,
+      ),
+    );
+    contractMocks.getEvent.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Create proof" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("proof-state")).toHaveTextContent(
+        `confirmed|${proofEventId}|${proofEventId}`,
+      ),
+    );
+
+    expect(createRefundableRsvpAdapter).toHaveBeenCalledWith(
+      PUBLIC_TESTNET_CONFIG,
+      expect.anything(),
+    );
+    expect(contractMocks.createEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizer: ACCOUNT,
+        noShowBeneficiary: ACCOUNT,
+        token: PUBLIC_TESTNET_CONFIG.xlmSacId,
+        depositAmount: 1n,
+        capacity: 1,
+      }),
+      expect.objectContaining({ timeoutInSeconds: 60 }),
+    );
+    const submitted = contractMocks.createEvent.mock.calls.at(-1)?.[0] as {
+      startAt: number;
+      checkInDeadline: number;
+      endAt: number;
+    };
+    expect(submitted.startAt).toBeLessThan(submitted.checkInDeadline);
+    expect(submitted.checkInDeadline).toBeLessThan(submitted.endAt);
+    expect(submittedScannerKey).toMatch(/^[\da-f]{64}$/);
+    expect(submittedScannerKey).not.toBe(demoScannerKey);
+
+    const pollerOptions = pollerMocks.options as ContractEventPollerOptions;
+    await act(async () => {
+      await pollerOptions.onEvents([
+        {
+          id: "foreign-event",
+          ledger: 500,
+          txHash: "1".repeat(64),
+          name: "event_created",
+          eventId: "9".repeat(64),
+          account: OTHER_ACCOUNT,
+          payload: {},
+          cursor: "foreign-cursor",
+        },
+      ]);
+    });
+    expect(contractMocks.getEvent).not.toHaveBeenCalled();
+
+    contractMocks.getEvent.mockResolvedValue(
+      contractEvent(proofEventId, ACCOUNT, submittedScannerKey),
+    );
+    await act(async () => {
+      await pollerOptions.onEvents([
+        {
+          id: "own-event",
+          ledger: 501,
+          txHash: "2".repeat(64),
+          name: "event_created",
+          eventId: proofEventId,
+          account: ACCOUNT,
+          payload: {},
+          cursor: "own-cursor",
+        },
+      ]);
+    });
+    expect(contractMocks.getEvent).toHaveBeenCalledWith(proofEventId);
+
+    contractMocks.getEvent.mockClear();
+    await user.click(screen.getByRole("button", { name: "Refresh proof" }));
+    await waitFor(() =>
+      expect(contractMocks.getEvent).toHaveBeenCalledWith(proofEventId),
+    );
   });
 });

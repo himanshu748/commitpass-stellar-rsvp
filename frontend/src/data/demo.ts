@@ -7,7 +7,15 @@ export type ReservationStatus =
 export type TransactionState = {
   kind: "reserve" | "refund" | "create-event";
   mode: "demo" | "contract";
-  status: "signing" | "submitting" | "confirmed" | "failed";
+  status:
+    | "simulating"
+    | "awaiting-signature"
+    | "signing"
+    | "submitted"
+    | "pending"
+    | "submitting"
+    | "confirmed"
+    | "failed";
   hash?: string;
   message: string;
 } | null;

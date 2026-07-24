@@ -196,8 +196,8 @@ beforeEach(() => {
 describe("StellarWalletAdapter", () => {
   it("initializes the kit and uses authModal when no wallet id is supplied", async () => {
     kitState.selectedModule = {
-      productId: "wallet-connect",
-      productName: "LOBSTR Mobile",
+      productId: "fordefi",
+      productName: "Fordefi",
     };
     const adapter = new StellarWalletAdapter({
       networkPassphrase: Networks.TESTNET,
@@ -207,8 +207,8 @@ describe("StellarWalletAdapter", () => {
     await expect(adapter.connect()).resolves.toMatchObject({
       status: "connected",
       address: ACCOUNT,
-      selectedWalletId: "wallet-connect",
-      selectedWalletName: "LOBSTR Mobile",
+      selectedWalletId: "fordefi",
+      selectedWalletName: "Fordefi",
       networkPassphrase: Networks.TESTNET,
     });
 
@@ -306,6 +306,37 @@ describe("StellarWalletAdapter", () => {
       address: undefined,
       selectedWalletId: undefined,
       error: { category: "configuration", retryable: false },
+    });
+  });
+
+  it("keeps Testnet signing available when an official module cannot report its network", async () => {
+    kitState.selectedModule = {
+      productId: "albedo",
+      productName: "Albedo",
+    };
+    const requestedXdr = buildTransaction();
+    const signedXdr = withDummySignature(requestedXdr);
+    mockedSignTransaction.mockResolvedValue({
+      signedTxXdr: signedXdr,
+      signerAddress: ACCOUNT,
+    });
+    const adapter = new StellarWalletAdapter({
+      networkPassphrase: Networks.TESTNET,
+    });
+
+    await expect(adapter.connect()).resolves.toMatchObject({
+      status: "connected",
+      selectedWalletId: "albedo",
+    });
+    await expect(adapter.signTransaction(requestedXdr)).resolves.toEqual({
+      signedTxXdr: signedXdr,
+      signerAddress: ACCOUNT,
+    });
+
+    expect(mockedGetNetwork).not.toHaveBeenCalled();
+    expect(mockedSignTransaction).toHaveBeenCalledWith(requestedXdr, {
+      networkPassphrase: Networks.TESTNET,
+      address: ACCOUNT,
     });
   });
 
@@ -437,8 +468,8 @@ describe("StellarWalletAdapter", () => {
 
   it("restores a cached kit address only after validating its network", async () => {
     kitState.selectedModule = {
-      productId: "hana",
-      productName: "Hana",
+      productId: "freighter",
+      productName: "Freighter",
     };
     const adapter = new StellarWalletAdapter({
       networkPassphrase: Networks.TESTNET,
@@ -447,8 +478,8 @@ describe("StellarWalletAdapter", () => {
     await expect(adapter.restore()).resolves.toMatchObject({
       status: "connected",
       address: ACCOUNT,
-      selectedWalletId: "hana",
-      selectedWalletName: "Hana",
+      selectedWalletId: "freighter",
+      selectedWalletName: "Freighter",
     });
     expect(mockedGetAddress).toHaveBeenCalledOnce();
     expect(mockedGetNetwork).toHaveBeenCalledOnce();

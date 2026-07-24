@@ -15,14 +15,26 @@ import {
   type ReservationStatus,
   type TransactionState,
 } from "../data/demo";
+import {
+  asHex32,
+  sha256,
+  utf8ToBytes,
+} from "../lib/bytes";
+import type { OnChainEvent } from "../lib/contract";
+import { CommitPassError } from "../lib/domain";
 import { EphemeralScannerSigner } from "../lib/scanner-crypto";
 import {
   DEMO_ATTENDEE_ADDRESS,
   DEMO_CONTRACT_ID,
+  PUBLIC_TESTNET_CONFIG,
+  PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
   SEED_EVENT_ID,
   STELLAR_TESTNET_PASSPHRASE,
 } from "../lib/seed";
-import { normalizeTransactionError } from "../lib/transaction";
+import {
+  normalizeTransactionError,
+  type TransactionStatus as CanonicalTransactionStatus,
+} from "../lib/transaction";
 import {
   createAttendeePass,
   createCheckInVoucher,
@@ -54,12 +66,38 @@ type LiveTestnetPaymentState = {
   message: string;
 } | null;
 
+type ContractActivityItem = {
+  id: string;
+  ledger: number;
+  name: string;
+  txHash: string;
+  eventId?: string;
+  account?: string;
+};
+
+type LiveContractProofState = {
+  targetEventId: string;
+  readStatus: "loading" | "ready" | "error";
+  event: OnChainEvent | null;
+  readError?: string;
+  transaction: TransactionState;
+  syncStatus: "connecting" | "live" | "error";
+  syncMessage: string;
+  events: ContractActivityItem[];
+};
+
+type LiveProofTarget = {
+  eventId: string;
+  expectedOrganizer?: string;
+};
+
 type CommitPassContextValue = {
   walletAddress: string | null;
   walletName: string | null;
   walletMode: WalletMode;
   testnetBalance: TestnetBalanceState;
   liveTestnetPayment: LiveTestnetPaymentState;
+  liveContractProof: LiveContractProofState;
   reservationStatus: ReservationStatus;
   transaction: TransactionState;
   arrivals: Arrival[];
@@ -73,6 +111,8 @@ type CommitPassContextValue = {
     destination: string,
     amount: string,
   ) => Promise<boolean>;
+  createLiveContractProof: () => Promise<boolean>;
+  refreshLiveContractRead: () => Promise<void>;
   reserveSpot: () => Promise<void>;
   simulateVoucher: () => Promise<void>;
   claimRefund: () => Promise<void>;
@@ -94,6 +134,21 @@ const delay = (milliseconds: number) =>
 const demoHash = (kind: string) =>
   `demo_${kind}_${crypto.randomUUID().replaceAll("-", "")}`;
 
+function transactionStateFromStatus(
+  status: CanonicalTransactionStatus,
+): TransactionState {
+  if (status.phase === "idle") {
+    return null;
+  }
+  return {
+    kind: "create-event",
+    mode: "contract",
+    status: status.phase,
+    hash: status.hash,
+    message: status.message,
+  };
+}
+
 export function CommitPassProvider({ children }: { children: ReactNode }) {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [walletName, setWalletName] = useState<string | null>(null);
@@ -102,6 +157,16 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
     useState<TestnetBalanceState>({ status: "idle" });
   const [liveTestnetPayment, setLiveTestnetPayment] =
     useState<LiveTestnetPaymentState>(null);
+  const [liveContractProof, setLiveContractProof] =
+    useState<LiveContractProofState>({
+      targetEventId: PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+      readStatus: "loading",
+      event: null,
+      transaction: null,
+      syncStatus: "connecting",
+      syncMessage: "Connecting to Stellar RPC event history…",
+      events: [],
+    });
   const [reservationStatus, setReservationStatus] =
     useState<ReservationStatus>("unreserved");
   const [transaction, setTransaction] = useState<TransactionState>(null);
@@ -112,6 +177,150 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
   const usedScannerNoncesRef = useRef(new Set<string>());
   const balanceRequestIdRef = useRef(0);
   const walletSessionIdRef = useRef(0);
+  const liveProofTargetRef = useRef<LiveProofTarget>({
+    eventId: PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+  });
+
+  const refreshLiveContractRead = useCallback(async () => {
+    const target = liveProofTargetRef.current;
+    setLiveContractProof((current) => ({
+      ...current,
+      targetEventId: target.eventId,
+      readStatus: "loading",
+      readError: undefined,
+    }));
+    try {
+      const { createRefundableRsvpAdapter } = await import("../lib/contract");
+      const adapter = createRefundableRsvpAdapter(PUBLIC_TESTNET_CONFIG);
+      const event = await adapter.getEvent(target.eventId);
+      if (liveProofTargetRef.current.eventId !== target.eventId) return;
+      if (
+        target.expectedOrganizer &&
+        event.organizer !== target.expectedOrganizer
+      ) {
+        throw new Error(
+          "The contract event organizer does not match the connected proof wallet.",
+        );
+      }
+      setLiveContractProof((current) => ({
+        ...current,
+        targetEventId: target.eventId,
+        readStatus: "ready",
+        event,
+        readError: undefined,
+      }));
+    } catch (error) {
+      if (liveProofTargetRef.current.eventId !== target.eventId) return;
+      const normalized = normalizeTransactionError(error);
+      setLiveContractProof((current) => ({
+        ...current,
+        readStatus: "error",
+        readError: normalized.message,
+      }));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshLiveContractRead();
+  }, [refreshLiveContractRead]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let stop: (() => void) | undefined;
+
+    setLiveContractProof((current) => ({
+      ...current,
+      syncStatus: "connecting",
+      syncMessage: "Connecting to Stellar RPC event history…",
+    }));
+
+    void import("../lib/contract-events")
+      .then(({ createContractEventPoller }) => {
+        if (controller.signal.aborted) return;
+        const poller = createContractEventPoller({
+          rpcUrl: PUBLIC_TESTNET_CONFIG.rpcUrl,
+          contractId: PUBLIC_TESTNET_CONFIG.contractId,
+          lookbackLedgers: 5_000,
+          intervalMs: 5_000,
+          signal: controller.signal,
+          onEvents: async (events) => {
+            if (controller.signal.aborted) return;
+            setLiveContractProof((current) => {
+              const byId = new Map(
+                [...events, ...current.events].map((event) => [
+                  event.id,
+                  {
+                    id: event.id,
+                    ledger: event.ledger,
+                    name: event.name,
+                    txHash: event.txHash,
+                    eventId: event.eventId,
+                    account: event.account,
+                  },
+                ]),
+              );
+              return {
+                ...current,
+                syncStatus: "live",
+                syncMessage: `Live cursor · ${byId.size} recent application event${byId.size === 1 ? "" : "s"} observed.`,
+                events: [...byId.values()]
+                  .sort((left, right) => right.ledger - left.ledger)
+                  .slice(0, 20),
+              };
+            });
+
+            const target = liveProofTargetRef.current;
+            const created = events.find(
+              (event) =>
+                event.name === "event_created" &&
+                event.eventId === target.eventId &&
+                (!target.expectedOrganizer ||
+                  event.account === target.expectedOrganizer),
+            );
+            if (!created) return;
+            await refreshLiveContractRead();
+          },
+          onPoll: () => {
+            if (controller.signal.aborted) return;
+            setLiveContractProof((current) => ({
+              ...current,
+              syncStatus: "live",
+              syncMessage: `Live cursor · ${current.events.length} recent application event${current.events.length === 1 ? "" : "s"} observed.`,
+            }));
+          },
+          onError: (error, retry) => {
+            if (controller.signal.aborted) return;
+            const normalized = normalizeTransactionError(error);
+            setLiveContractProof((current) => ({
+              ...current,
+              syncStatus: "error",
+              syncMessage: `${normalized.message} Retrying (attempt ${retry.attempt}).`,
+            }));
+          },
+        });
+        stop = () => poller.stop();
+        poller.start();
+        setLiveContractProof((current) => ({
+          ...current,
+          syncStatus: "live",
+          syncMessage: "Live cursor · polling contract events every 5 seconds.",
+        }));
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        const normalized = normalizeTransactionError(error);
+        setLiveContractProof((current) => ({
+          ...current,
+          syncStatus: "error",
+          syncMessage: normalized.message,
+        }));
+      });
+
+    return () => {
+      controller.abort();
+      stop?.();
+    };
+  }, [refreshLiveContractRead]);
 
   useEffect(() => {
     let disposed = false;
@@ -213,7 +422,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       pushToast(
         "success",
         "Testnet wallet connected",
-        `${connection.walletName} is connected. The RSVP demo remains no-funds; only the separate proof panel can request a Testnet payment.`,
+        `${connection.walletName} is connected through StellarWalletsKit. The RSVP demo remains no-funds; live contract and payment proofs require separate wallet approval.`,
       );
       return true;
     } catch (error) {
@@ -347,6 +556,154 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       walletMode,
     ],
   );
+
+  const createLiveContractProof = useCallback(async () => {
+    if (walletMode !== "live" || !walletAddress) {
+      pushToast(
+        "error",
+        "Connect a Testnet wallet",
+        "A live Stellar wallet is required for this contract write.",
+      );
+      return false;
+    }
+    if (
+      testnetBalance.status === "ready" &&
+      Number.parseFloat(testnetBalance.amount) <= 0
+    ) {
+      const error = new CommitPassError(
+        "InsufficientBalance",
+        "This Testnet account needs XLM for the network fee.",
+      );
+      const normalized = normalizeTransactionError(error);
+      setLiveContractProof((current) => ({
+        ...current,
+        transaction: {
+          kind: "create-event",
+          mode: "contract",
+          status: "failed",
+          message: normalized.message,
+        },
+      }));
+      pushToast("error", "Insufficient Testnet balance", normalized.message);
+      return false;
+    }
+
+    const sessionId = walletSessionIdRef.current;
+    let proofScannerSigner: EphemeralScannerSigner | null = null;
+    try {
+      const [{ createRefundableRsvpAdapter, createSecureEventSalt }, wallet] =
+        await Promise.all([
+          import("../lib/contract"),
+          import("../lib/wallet"),
+        ]);
+      proofScannerSigner = await EphemeralScannerSigner.generate();
+      const eventSalt = createSecureEventSalt();
+      const now = Math.floor(Date.now() / 1_000);
+      const metadataHash = asHex32(
+        await sha256(
+          utf8ToBytes(
+            [
+              "commitpass-yellow-proof-v1",
+              walletAddress,
+              eventSalt,
+              String(now),
+            ].join(":"),
+          ),
+        ),
+      );
+      const adapter = createRefundableRsvpAdapter(
+        PUBLIC_TESTNET_CONFIG,
+        wallet.getConnectedTestnetWalletAdapter(),
+      );
+      const receipt = await adapter.createEvent(
+        {
+          eventSalt,
+          organizer: walletAddress,
+          metadataHash,
+          startAt: now + 3_600,
+          checkInDeadline: now + 7_200,
+          endAt: now + 10_800,
+          token: PUBLIC_TESTNET_CONFIG.xlmSacId,
+          depositAmount: 1n,
+          capacity: 1,
+          noShowBeneficiary: walletAddress,
+          cancellationPolicy: "FullRefund",
+          scannerPublicKey: proofScannerSigner.publicKeyHex,
+        },
+        {
+          timeoutInSeconds: 60,
+          onStatus: (status) => {
+            if (sessionId !== walletSessionIdRef.current) return;
+            setLiveContractProof((current) => ({
+              ...current,
+              transaction: transactionStateFromStatus(status),
+            }));
+          },
+        },
+      );
+      if (sessionId !== walletSessionIdRef.current) return false;
+      if (receipt.result.organizer !== walletAddress) {
+        throw new Error(
+          "The confirmed proof event belongs to a different organizer.",
+        );
+      }
+      liveProofTargetRef.current = {
+        eventId: receipt.result.id,
+        expectedOrganizer: walletAddress,
+      };
+      setLiveContractProof((current) => ({
+        ...current,
+        targetEventId: receipt.result.id,
+        readStatus: "ready",
+        event: receipt.result,
+        transaction: {
+          kind: "create-event",
+          mode: "contract",
+          status: "confirmed",
+          hash: receipt.hash,
+          message:
+            "Proof event confirmed. Event polling will reconcile the emitted contract event.",
+        },
+      }));
+      pushToast(
+        "success",
+        "Contract proof confirmed",
+        "The new event record is public on Stellar Testnet; no tokens were transferred.",
+      );
+      await loadTestnetBalanceForAddress(walletAddress);
+      return true;
+    } catch (error) {
+      if (sessionId !== walletSessionIdRef.current) return false;
+      const normalized = normalizeTransactionError(error);
+      setLiveContractProof((current) => ({
+        ...current,
+        transaction: {
+          kind: "create-event",
+          mode: "contract",
+          status: "failed",
+          message: normalized.message,
+        },
+      }));
+      pushToast(
+        "error",
+        normalized.category === "wallet-rejected"
+          ? "Wallet request cancelled"
+          : normalized.category === "insufficient-balance"
+            ? "Insufficient Testnet balance"
+            : "Contract proof failed",
+        normalized.message,
+      );
+      return false;
+    } finally {
+      proofScannerSigner?.destroy();
+    }
+  }, [
+    loadTestnetBalanceForAddress,
+    pushToast,
+    testnetBalance,
+    walletAddress,
+    walletMode,
+  ]);
 
   const reserveSpot = useCallback(async () => {
     if (!walletAddress) {
@@ -565,6 +922,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       walletMode,
       testnetBalance,
       liveTestnetPayment,
+      liveContractProof,
       reservationStatus,
       transaction,
       arrivals,
@@ -575,6 +933,8 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       disconnectWallet,
       refreshTestnetBalance,
       sendTestnetPayment,
+      createLiveContractProof,
+      refreshLiveContractRead,
       reserveSpot,
       simulateVoucher,
       claimRefund,
@@ -588,11 +948,14 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       claimRefund,
       connectDemoWallet,
       connectLiveWallet,
+      createLiveContractProof,
       disconnectWallet,
       dismissToast,
       liveTestnetPayment,
+      liveContractProof,
       pushToast,
       refreshTestnetBalance,
+      refreshLiveContractRead,
       reservationStatus,
       rotateScannerKey,
       reserveSpot,

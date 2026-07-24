@@ -95,6 +95,19 @@ const SOROBAN_AUTH_ENTRY_WALLET_IDS = new Set([
   "onekey",
 ]);
 
+// Wallets Kit exposes one uniform getNetwork method, but several official
+// modules intentionally implement it by throwing "not supported". For those
+// modules, every signing request is still pinned to the expected passphrase
+// and a wrong-network signature is rejected by Testnet submission.
+const NETWORK_REPORTING_WALLET_IDS = new Set([
+  "BitgetWallet",
+  "cactuslink",
+  "dcent",
+  "fordefi",
+  "freighter",
+  "klever",
+]);
+
 export class StellarWalletAdapter {
   private state: WalletState;
   private readonly listeners = new Set<() => void>();
@@ -337,6 +350,13 @@ export class StellarWalletAdapter {
   }
 
   private async assertKitNetwork(): Promise<void> {
+    if (
+      !NETWORK_REPORTING_WALLET_IDS.has(
+        StellarWalletsKit.selectedModule.productId,
+      )
+    ) {
+      return;
+    }
     const details = await StellarWalletsKit.getNetwork();
     if (
       !details ||
