@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
-const executablePath =
-  "/Users/himanshujha/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell";
+const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
 const source =
   "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57";
 const destination =
   "GABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEJXA";
 const passphrase = "Test SDF Network ; September 2015";
 const screenshotRoot =
-  "/Users/himanshujha/Documents/Codex/2026-07-24/he/work";
+  process.env.COMMITPASS_QA_OUTPUT_DIR ??
+  fileURLToPath(new URL("../work/", import.meta.url));
+await mkdir(screenshotRoot, { recursive: true });
 
-const browser = await chromium.launch({ headless: true, executablePath });
+const browser = await chromium.launch({
+  headless: true,
+  ...(executablePath ? { executablePath } : {}),
+});
 const context = await browser.newContext({
   viewport: { width: 1280, height: 900 },
 });
