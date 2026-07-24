@@ -20,7 +20,7 @@ This repository is a complete Stellar Journey to Mastery submission candidate:
   Ed25519 signing in the judge sandbox;
 - a deterministic in-session demo for judges without wallet setup;
 - a public Stellar Testnet deployment and complete on-chain lifecycle proof;
-- a threat model, pilot plan, submission copy, demo script, and pitch deck.
+- a threat model, pilot plan, submission copy, and demo script.
 
 ## Try the product
 
@@ -160,7 +160,6 @@ contracts/refundable-rsvp/   Soroban contract and Rust tests
 packages/refundable-rsvp/    Generated TypeScript contract client
 frontend/                    React/Vite app, unit tests, and Playwright tests
 docs/                        Product, architecture, security, pilot, and submission docs
-outputs/                     Judge-ready deliverables
 ```
 
 ## Security boundary
