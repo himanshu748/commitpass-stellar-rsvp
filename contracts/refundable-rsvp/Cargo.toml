@@ -1,0 +1,19 @@
+[package]
+name = "refundable-rsvp"
+version = "0.1.0"
+description = "Refundable event-attendance deposits on Stellar"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk.workspace = true
+
+[dev-dependencies]
+ed25519-dalek = "2.2.0"
+soroban-sdk = { workspace = true, features = ["testutils"] }

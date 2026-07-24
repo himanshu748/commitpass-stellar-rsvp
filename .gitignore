@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+contracts/target/
+work/
+site/
+outputs/CommitPass-Source.tar.gz
+outputs/CommitPass-RiseIn-Pitch.pptx
+outputs/CommitPass-RiseIn-Pitch.pdf
+outputs/CommitPass-Wasm.wasm
