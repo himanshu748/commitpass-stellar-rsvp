@@ -1,0 +1,66 @@
+name: CommitPass Release Bundle
+
+"on":
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build deployment artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            packages/event-directory/package-lock.json
+            packages/refundable-rsvp/package-lock.json
+      - name: Pin npm used by lockfiles
+        run: npm install --global npm@11.6.0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+      - name: Build Soroban contracts
+        working-directory: contracts
+        run: |
+          cargo build --locked --target wasm32v1-none --release --package refundable-rsvp
+          cargo build --locked --target wasm32v1-none --release --package event-directory
+      - name: Build generated clients
+        run: |
+          npm --prefix packages/refundable-rsvp ci --ignore-scripts
+          npm --prefix packages/refundable-rsvp run build
+          npm --prefix packages/event-directory ci --ignore-scripts
+          npm --prefix packages/event-directory run build
+      - name: Test and build web application
+        run: |
+          npm --prefix frontend ci --ignore-scripts
+          npm --prefix frontend test
+          npm --prefix frontend run lint
+          npm --prefix frontend run build
+      - name: Assemble immutable release bundle
+        run: |
+          mkdir -p release/contracts release/web release/deployments
+          cp contracts/target/wasm32v1-none/release/refundable_rsvp.wasm release/contracts/
+          cp contracts/target/wasm32v1-none/release/event_directory.wasm release/contracts/
+          cp -R frontend/dist/. release/web/
+          cp deployments/testnet.json release/deployments/
+          cd release
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - name: Upload deployment bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: commitpass-release-${{ github.sha }}
+          path: release
+          if-no-files-found: error
+          retention-days: 30
+
