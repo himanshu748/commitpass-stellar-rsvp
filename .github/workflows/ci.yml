@@ -20,9 +20,15 @@ jobs:
           cache: npm
           cache-dependency-path: |
             frontend/package-lock.json
+            packages/event-directory/package-lock.json
             packages/refundable-rsvp/package-lock.json
+      - name: Pin npm used by lockfiles
+        run: npm install --global npm@11.6.0
       - name: Build generated contract client
         working-directory: packages/refundable-rsvp
+        run: npm ci --ignore-scripts && npm run build
+      - name: Build generated directory client
+        working-directory: packages/event-directory
         run: npm ci --ignore-scripts && npm run build
       - name: Install web dependencies
         working-directory: frontend
@@ -36,6 +42,22 @@ jobs:
       - name: Production build
         working-directory: frontend
         run: npm run build
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Browser journeys
+        working-directory: frontend
+        run: npm run test:e2e
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 14
 
   contract:
     name: Soroban checks
@@ -60,4 +82,6 @@ jobs:
         run: cargo test --workspace
       - name: Build contract Wasm
         working-directory: contracts
-        run: cargo build --target wasm32v1-none --release --package refundable-rsvp
+        run: |
+          cargo build --target wasm32v1-none --release --package refundable-rsvp
+          cargo build --target wasm32v1-none --release --package event-directory
