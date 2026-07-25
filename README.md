@@ -121,6 +121,13 @@ approval.
 
 ## Product screenshots
 
+### Production multi-wallet chooser
+
+Captured from the public Yellow Belt deployment. The modal is rendered by the
+official Stellar Wallets Kit and exposes multiple supported wallet providers.
+
+![Stellar Wallets Kit provider options in CommitPass](docs/screenshots/wallet-options-production.jpg)
+
 ### Responsive attendee experience
 
 ![CommitPass desktop attendee experience](docs/screenshots/desktop-attendee.jpg)

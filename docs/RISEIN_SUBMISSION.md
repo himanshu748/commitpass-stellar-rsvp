@@ -175,8 +175,8 @@ requires the wallet holder to review and approve it.
 - [x] Cursor-based RPC event polling with deduplication and retries.
 - [x] Contract events used as sync hints followed by authoritative reads.
 - [x] Public contract address and verifiable contract-call transaction hash.
-- [ ] Add a wallet-options screenshot only after capturing the real modal in
-  the target browser; no screenshot is fabricated in this repository state.
+- [x] Production wallet-options screenshot captured from the real Stellar
+  Wallets Kit modal (`docs/screenshots/wallet-options-production.jpg`).
 - [x] Final Git history contains at least two meaningful Yellow implementation
   commits (`0820e1b` wallet kit; `fbb8ecd` contract proof and event sync).
 
