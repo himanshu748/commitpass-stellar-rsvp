@@ -47,6 +47,12 @@ jobs:
           npm --prefix frontend test
           npm --prefix frontend run lint
           npm --prefix frontend run build
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Verify desktop and mobile browser journeys
+        working-directory: frontend
+        run: npm run test:e2e
       - name: Assemble immutable release bundle
         run: |
           mkdir -p release/contracts release/web release/deployments
@@ -63,4 +69,12 @@ jobs:
           path: release
           if-no-files-found: error
           retention-days: 30
-
+      - name: Upload browser evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: commitpass-browser-evidence-${{ github.sha }}
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: error
+          retention-days: 30

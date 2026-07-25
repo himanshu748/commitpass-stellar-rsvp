@@ -5,11 +5,15 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: true,
   retries: 0,
-  reporter: [["list"]],
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: "playwright-report", open: "never" }],
+  ],
+  outputDir: "test-results",
   use: {
     baseURL: "http://127.0.0.1:4173",
     headless: true,
-    screenshot: "only-on-failure",
+    screenshot: "on",
     trace: "retain-on-failure",
   },
   projects: [
