@@ -9,21 +9,27 @@ wallet-bound check-in voucher. The attendee submits that voucher and receives
 the full deposit back. Unclaimed no-show deposits settle only to the beneficiary
 disclosed before reservation.
 
-This repository is a complete Stellar Journey to Mastery submission candidate:
+This repository is a complete Stellar Journey to Mastery Orange Belt submission:
 
 - a polished responsive attendee and organizer web app;
-- a protocol-27 Soroban contract with 22 passing Rust tests;
-- generated TypeScript bindings and a typed application adapter;
+- two protocol-27 Soroban contracts with 27 passing Rust tests;
+- generated TypeScript bindings for both contracts and a typed application
+  adapter;
 - the official `@creit.tech/stellar-wallets-kit` 2.5.0 multi-wallet modal,
   network validation, and hardened transaction signing;
 - a mounted live Testnet proof panel that reads the deployed contract, invokes
-  `create_event` from the browser, shows the full transaction lifecycle, and
-  reconciles contract events with authoritative reads;
+  `create_event`, `reserve`, `voucher_message`, and
+  `claim_check_in_refund` from the browser, shows each transaction lifecycle,
+  and reconciles contract events with authoritative reads;
+- a load-bearing native XLM SAC call in the deployed RSVP contract and a
+  tested Event Directory contract that reads RSVP state across contracts;
 - real camera QR scanning, strict pass validation, replay rejection, and local
   Ed25519 signing in the judge sandbox;
 - a deterministic in-session demo for judges without wallet setup;
 - a public Stellar Testnet deployment and complete on-chain lifecycle proof;
-- a threat model, pilot plan, submission copy, and demo script.
+- green CI covering contracts, generated clients, frontend tests, builds, and
+  four desktop/mobile browser journeys, plus a reproducible release workflow;
+- a threat model, pilot plan, Orange submission copy, and 78-second demo.
 
 ## Try the product
 
@@ -34,9 +40,15 @@ Public source:
 https://github.com/himanshu748/commitpass-stellar-rsvp
 
 ```sh
-cd frontend
-npm install
-npm run dev
+# Generated contract clients (required by the frontend)
+npm --prefix packages/refundable-rsvp install
+npm --prefix packages/refundable-rsvp run build
+npm --prefix packages/event-directory install
+npm --prefix packages/event-directory run build
+
+# Web application
+npm --prefix frontend install
+npm --prefix frontend run dev
 ```
 
 Open the local URL. The product deliberately offers two separate paths:
@@ -44,10 +56,11 @@ Open the local URL. The product deliberately offers two separate paths:
 - **Use demo wallet** runs the complete RSVP → check-in → refund story locally
   without an extension or funds.
 - **Verify wallet address** opens the official Stellar Wallets Kit chooser.
-  After a Testnet wallet connects, the proof panel reads the deployed
-  `CommitPass` contract and can invoke `create_event` only after the wallet
-  shows its own confirmation. This write moves no tokens; the wallet pays only
-  the Testnet network fee.
+  After a Testnet wallet connects, the live panel creates a one-seat event,
+  reserves it with a 0.001 XLM commitment, obtains the contract's canonical
+  voucher bytes, submits the event-scoped Ed25519 voucher, and returns the full
+  deposit. Every wallet-authorized write requires the wallet holder's own
+  confirmation.
 
 The full judge-sandbox flow is:
 
@@ -57,10 +70,31 @@ The full judge-sandbox flow is:
 4. claim the full refund;
 5. create an organizer event and test the scanner fallback.
 
-RSVP, check-in, and refund actions remain a clearly labelled no-funds judge
-sandbox. The separate proof panel is live: its `create_event` action and
-optional classic payment can submit transactions, and only on Testnet. Testnet
-XLM has no cash value.
+The narrative RSVP routes remain a clearly labelled no-funds judge sandbox for
+fast evaluation. The separate live panel mounts the full contract-backed
+create → reserve → signed check-in → refund loop on Testnet. Its published
+commitment is 0.001 XLM (10,000 stroops), and Testnet XLM has no cash value.
+
+## Orange Belt live walkthrough
+
+1. Connect a compatible Stellar wallet and keep it on **Testnet**.
+2. Select **Create live Testnet event**. Review and approve the unique
+   `create_event` invocation in the wallet.
+3. Select **Reserve 0.001 XLM**. The generated client simulates the call, the
+   wallet authorizes it, and `reserve` calls the native XLM SAC `transfer`
+   contract before the UI re-reads the reservation.
+4. Wait for the short demonstration check-in window, then select **Claim
+   check-in refund**. The browser asks the contract for canonical voucher bytes,
+   signs them with the in-memory event-scoped scanner key, and submits
+   `claim_check_in_refund` with attendee authorization.
+5. Confirm that the reservation reads `CheckedIn`, outstanding escrow returns
+   to zero, and the complete 0.001 XLM is refunded.
+6. Inspect the event cursor: lifecycle events are treated as hints and followed
+   by authoritative `get_event` / `get_reservation` reads.
+
+Disconnecting, replacing the event, or completing the refund destroys the
+ephemeral scanner signer. It is never written to repository files, browser
+storage, contract state, or a backend.
 
 ## White Belt Testnet walkthrough
 
@@ -96,16 +130,17 @@ address and a wallet signature for the transaction XDR.
 3. Inspect **Authoritative contract read**. It calls `get_event` against the
    deployed contract. **Cursor-based event sync** polls successful application
    events and treats each event only as a signal to read contract state again.
-4. Select **Create Testnet proof event**. CommitPass builds a unique one-seat
+4. Select **Create live Testnet event**. CommitPass builds a unique one-seat
    `create_event` invocation with the connected address as organizer and
-   beneficiary. A fresh, unlinkable scanner public key is generated for this
-   proof-only record. The call stores event rules but enables no reservations
-   in the UI and transfers no XLM; only the Testnet network fee applies.
+   beneficiary. A fresh, unlinkable scanner public key is retained only for the
+   current in-memory live loop. Event creation itself transfers no XLM; only the
+   Testnet network fee applies.
 5. Review and approve the exact invocation in the wallet. The panel reports
    simulation → awaiting signature → submitted → pending → confirmed, or a
    specific failure.
 6. Open the returned Stellar Expert link. A confirmed `event_created` signal
-   is followed by an authoritative `get_event` read.
+   is followed by an authoritative `get_event` read. The Orange walkthrough can
+   then continue through reservation, canonical voucher signing, and refund.
 7. Try the safe failure paths as needed: no compatible wallet, cancel the
    wallet request, switch the wallet away from Testnet, or use an unfunded
    Testnet account. The UI reports wallet unavailable, request rejected, wrong
@@ -120,6 +155,20 @@ session. A fresh browser write always requires the connected wallet holder's
 approval.
 
 ## Product screenshots
+
+### Orange Belt evidence
+
+Responsive production UI:
+
+![CommitPass Orange Belt mobile production UI](docs/screenshots/orange-mobile.png)
+
+Green GitHub Actions run:
+
+![CommitPass CI with passing Web and Soroban jobs](docs/screenshots/orange-ci.png)
+
+Four passing desktop/mobile Playwright journeys:
+
+![CommitPass Playwright report with four passing journeys](docs/screenshots/orange-tests.png)
 
 ### Production multi-wallet chooser
 
@@ -157,7 +206,9 @@ official Stellar Wallets Kit and exposes multiple supported wallet providers.
 The constructor permanently pins the same-network native XLM SAC. The pinned
 address was read back from the deployed contract after deployment. The
 verification event completed the real reserve → scanner signature → attendee
-refund lifecycle on public Testnet.
+refund lifecycle on public Testnet. That permanent explorer fixture used
+2 Testnet XLM for easy ledger inspection; the current browser walkthrough uses
+the smaller 0.001 Testnet XLM commitment disclosed in the UI.
 
 ## Run the checks
 
@@ -168,9 +219,13 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo build --target wasm32v1-none --release --package refundable-rsvp
+cargo build --target wasm32v1-none --release --package event-directory
 
-# Generated binding
+# Generated bindings
 cd ../packages/refundable-rsvp
+npm install
+npm run build
+cd ../event-directory
 npm install
 npm run build
 
@@ -184,38 +239,45 @@ npm run test:e2e
 npm audit --omit=dev
 ```
 
+The public CI run for commit `125a200` is
+[green](https://github.com/himanshu748/commitpass-stellar-rsvp/actions/runs/30139625279)
+and retains its Playwright report and screenshots as a workflow artifact.
+
 ## Integration boundary
 
-The rendered RSVP product is deliberately fixed to the no-funds judge sandbox.
-Event reserve, voucher, and refund actions remain local simulations and their
-receipts are labelled as demo state.
+CommitPass intentionally exposes two clearly separated experiences:
 
-The isolated wallet proof panel is the live Yellow Belt route. It uses Stellar
-Wallets Kit, reads `get_event`, invokes `create_event` through the generated
-client, displays transaction progress, and polls RPC contract events by cursor.
-`create_event` does not transfer a deposit. The optional classic payment proof
-is separate and sends only a user-entered amount after wallet approval. Both
-routes reject a non-Testnet wallet.
+- the narrative judge sandbox, whose receipts are local and labelled demo
+  state; and
+- the live Testnet panel, whose event, reservation, voucher, refund, balances,
+  transaction hashes, and contract reads come from the deployed Soroban
+  contract.
 
-The generated `GeneratedRefundableRsvpAdapter` handles simulation, typed
-contract errors, wallet authorization, submission, and polling. Contract events
-are synchronization hints, not a second state store: an observed
-`event_created` triggers an authoritative contract read. Reserve, voucher, and
-refund are not yet mounted as browser contract actions. Their real reserve →
-canonical scanner-signature → refund lifecycle was executed with Stellar CLI
-and remains independently visible in the public transactions above.
+`GeneratedRefundableRsvpAdapter` handles simulation, typed errors, wallet
+authorization, submission, restoration, polling, and result decoding.
+`CommitPassProvider` mounts the complete live lifecycle and holds the
+event-scoped scanner key only for that in-memory browser session. Contract
+events—`event_created`, `reserved`, `checked_in`, cancellation, refund, and
+no-show signals—are synchronization hints rather than a second state store;
+every relevant signal triggers an authoritative contract read.
 
-Before a pilot, wire an explicit contract-backed provider to those modules,
-query reservations in the scanner, add a secure voucher relay or isolated
-signer, and repeat the browser suite against a fresh Testnet event. This
-boundary keeps simulated RSVP receipts distinct from real ledger transactions.
+The deployed RSVP contract performs load-bearing inter-contract communication
+with the native XLM SAC. The second custom Event Directory contract is tested,
+has generated bindings, is built in CI, and calls RSVP read methods; it is
+release-ready but is not represented as publicly deployed in this submission.
+Before a real-value pilot, replace the browser-held event signer with an
+isolated signer or secure device keystore and complete an independent audit.
 
 ## Repository map
 
 ```text
 contracts/refundable-rsvp/   Soroban contract and Rust tests
+contracts/event-directory/   Read-only cross-contract RSVP index and tests
 packages/refundable-rsvp/    Generated TypeScript contract client
+packages/event-directory/    Generated TypeScript directory client
 frontend/                    React/Vite app, unit tests, and Playwright tests
+deployments/                 Reproducible public Testnet proof manifest
+scripts/                     Build, verify, and deployment workflows
 docs/                        Product, architecture, security, pilot, and submission docs
 ```
 
@@ -233,9 +295,15 @@ contract has received an internal focused review with no remaining Critical,
 High, or Medium findings, but it has not received an independent audit and
 must not custody Mainnet funds until it does.
 
+Before publication, a GitGuardian-compatible local scan of the tracked tree and
+full Git history found no high-confidence credential patterns. The evidence
+index records the narrower scan details and discloses that official `ggshield`
+was not run because no GitGuardian API token is configured.
+
 Read [the architecture](docs/ARCHITECTURE.md),
 [the threat model](docs/SECURITY.md), and
-[the pilot plan](docs/PILOT_PLAN.md) before a production pilot.
+[the Orange evidence index](docs/ORANGE_BELT.md). Read the
+[pilot plan](docs/PILOT_PLAN.md) before a production pilot.
 
 ## Rise In fit
 
@@ -243,7 +311,7 @@ The White Belt evidence remains intact: real Testnet wallet connection, balance
 read, user-approved XLM payment support, transaction result/hash, public
 repository, setup guide, and screenshots.
 
-The Yellow Belt deliverable adds the official Stellar Wallets Kit 2.5.0
+The Yellow Belt evidence adds the official Stellar Wallets Kit 2.5.0
 multi-wallet chooser; explicit wallet, rejection, network, and balance errors;
 a deployed Testnet contract called from the frontend; a visible transaction
 lifecycle; and cursor-based event synchronization followed by authoritative
@@ -251,9 +319,15 @@ reads. The public `create_event` transaction above is independently verifiable.
 A fresh browser signature is intentionally left to the wallet holder and is not
 claimed as automation evidence.
 
-Orange, Green, Blue, and Black completion are not claimed. Full contract-backed
-RSVP wiring, secure pilot scanner operations, real-user evidence, and Mainnet
-readiness remain later milestones.
+The Orange Belt deliverable adds the complete contract-backed browser loop,
+advanced inter-contract calls, an Event Directory contract, lifecycle event
+reconciliation, responsive and explicit failure states, 27 Rust tests, 53
+frontend tests, four Playwright journeys, green CI/CD, release artifacts,
+deployment proof, screenshots, and a one-to-two-minute demo.
+
+Green, Blue, and Black completion are not claimed. Secure pilot scanner
+operations, real-user evidence, an independent audit, and Mainnet readiness
+remain later milestones.
 
 Program terms and prize decisions remain solely with Rise In and Stellar:
 [Stellar Journey to Mastery](https://www.risein.com/programs/stellar-journey-to-mastery-monthly-builder-challenges).

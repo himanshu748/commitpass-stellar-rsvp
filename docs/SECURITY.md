@@ -4,7 +4,8 @@
 
 The contract received an internal focused review after implementation and a
 second review after hardening. No remaining Critical, High, or Medium issue was
-identified. Twenty-two unit tests include real missing-authorization checks and
+identified. Twenty-seven unit tests across Refundable RSVP and Event Directory
+include real missing-authorization checks, inter-contract read validation, and
 atomic rollback tests for failed outgoing token transfers.
 
 This is not an independent audit. Mainnet custody must wait for an external
@@ -70,9 +71,11 @@ Mitigations for production:
 
 A malicious frontend can propose harmful transactions or lie about display
 copy. Wallet transaction review and open-source verification remain necessary.
-The Yellow proof deliberately uses `create_event`, which moves no token, but it
-still creates permanent contract state and incurs a Testnet network fee. Users
-must inspect and approve the wallet prompt; the app never signs automatically.
+The live loop uses `create_event`, `reserve`, and `claim_check_in_refund`.
+`create_event` moves no token, while reservation transfers the clearly
+disclosed 0.001 Testnet XLM commitment and the claim returns it after voucher
+verification. Users must inspect and approve every wallet prompt; the app never
+approves wallet authorization automatically.
 Production deployments should add:
 
 - a pinned contract address and build provenance;
@@ -123,9 +126,10 @@ needs to take.
 RPC contract events are hints, not authoritative records. The poller accepts
 only successful contract events for the pinned contract, decodes the expected
 `rsvp` namespace, deduplicates event IDs, and advances the opaque RPC cursor
-only after its event callback succeeds. The app reconciles only the currently
-displayed event ID and expected organizer; a matching `event_created` signal
-triggers `get_event`.
+only after its event callback succeeds. The app reconciles only the active
+event and expected participants. Create, reserve, check-in, cancellation,
+refund, and no-show signals trigger authoritative `get_event` and, when
+relevant, `get_reservation` reads.
 
 The in-memory cursor can be lost on refresh, so the client restarts from a
 bounded ledger lookback and deduplicates the returned page. Replayed, delayed,
@@ -139,11 +143,11 @@ state.
 - Persistent entries can eventually archive; client writes request automatic
   restoration where supported.
 - The MVP has no decentralized proof of physical presence.
-- The mounted browser contract write is limited to `create_event`; live browser
-  reserve and refund flows are not claimed.
-- Each proof event receives a fresh scanner public key. The proof UI exposes no
-  reservation path and destroys the one-time private key after publication, so
-  these records are evidence-only rather than operational events.
+- Each live event receives a fresh scanner key that remains in browser memory
+  only until the refund, disconnect, or event replacement. This is appropriate
+  for Testnet demonstration but not a production organizer key-control model.
+- The Event Directory contract is tested and built in CI but is not claimed as
+  publicly deployed; its deployment manifest fields remain null.
 - The public historical `create_event` hash proves the deployed method, but is
   not represented as a browser signature from the current preparation session.
 - The verification deployment is Testnet only; Testnet XLM has no cash value.

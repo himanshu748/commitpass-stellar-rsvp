@@ -1,111 +1,93 @@
-# CommitPass demo script
+# CommitPass Orange Belt demo script
 
-Target length: 3 minutes.
+Target length: 90–120 seconds. The prerecorded evidence video is 78.1 seconds;
+this version leaves room for an optional live wallet confirmation.
 
-## 0:00–0:20 — Problem
+## 0:00–0:15 — Problem and promise
 
-“Free RSVPs are easy to collect and hard to trust. Organizers plan for a full
-room, genuine attendees get waitlisted, and empty seats still appear. CommitPass
-adds one small, transparent commitment: show up and get it back.”
+“Free RSVPs are easy to collect and hard to trust. CommitPass asks for one
+small, published Testnet XLM commitment: show up, verify attendance, and get the
+entire amount back.”
 
-Show the attendee event page and the published 2 XLM rule.
+Show the responsive attendee page and the four-step Reserve → Arrive → Verify →
+Refund explanation.
 
-## 0:20–0:50 — Reserve
+## 0:15–0:45 — Live Testnet lifecycle
 
-Click **Reserve my spot**, choose **Use demo wallet**, and review:
+Open **Connect wallet** → **Choose Stellar wallet** and keep the wallet on
+Testnet.
 
-- full refund after verified check-in;
-- disclosed no-show beneficiary;
-- cancellation always enables a full refund;
-- Testnet XLM has no cash value.
+1. Select **Create live Testnet event** and review the `create_event`
+   invocation.
+2. Select **Reserve 0.001 XLM** and review the amount in the wallet.
+3. When check-in opens, select **Claim check-in refund**.
 
-Confirm the reservation. Point to the increased capacity count and confirmed
-transaction state.
+Explain:
 
-## 0:50–1:25 — Check in and refund
+“The event-scoped Ed25519 signer exists only in this browser session. It asks
+the deployed contract for canonical voucher bytes. The attendee authorizes the
+claim, the contract verifies the short-lived voucher, and all 10,000 stroops
+return atomically.”
 
-Open the one-time pass. Explain that the QR binds the event, attendee wallet,
-and random nonce.
+Point to the final authoritative reservation and event reads. Never imply that
+the demo automation approved a wallet request; the wallet holder reviews every
+authorization.
 
-Click **Simulate organizer scan**. Explain:
+## 0:45–1:05 — Advanced contract and event architecture
 
-“In the real lifecycle, the venue scanner signs canonical bytes from the
-deployed contract. The voucher is bound to this wallet, this contract, and this
-network. The product scanner uses a 60-second expiry policy.”
+Show the architecture:
 
-Click **Simulate my 2 XLM refund** and show the completed sandbox receipt.
+```text
+Attendee wallet → Refundable RSVP → native XLM SAC
+                         ▲
+                         │ read-only cross-contract calls
+                  Event Directory
+```
 
-## 1:25–1:50 — Organizer workflow
+State that the deployed RSVP contract's reserve path performs the load-bearing
+native SAC transfer. Event Directory is a second tested custom contract that
+calls RSVP read methods; it is built in CI but is not claimed as publicly
+deployed.
 
-Open **Host an event**. Highlight the fixed deposit, capacity, check-in window,
-beneficiary, and event-scoped scanner public key. Review the immutable rules and
-create the event.
+Show cursor event sync and explain:
 
-On **Check-in sandbox**, show the camera scanner and manual-code fallback. Avoid
-requesting camera permission during a remote judge demo unless the camera has
-already been tested.
+“Events are hints, not application state. Create, reserve, check-in,
+cancellation, refund, and no-show signals are deduplicated by cursor and
+followed by authoritative contract reads.”
 
-## 1:50–2:30 — Yellow Belt live contract proof
+## 1:05–1:20 — Repeatable evidence
 
-Open **Connect wallet** → **Verify wallet address**. Point out that the chooser
-is the official Stellar Wallets Kit modal and can list multiple supported
-wallets. Choose an installed wallet on Testnet.
+Show the green CI run:
 
-Show the native balance, **Authoritative contract read**, and **Cursor-based
-event sync**. Explain:
+https://github.com/himanshu748/commitpass-stellar-rsvp/actions/runs/30139625279
 
-“Events tell the client that something changed; they never replace contract
-state. After an `event_created` signal, CommitPass reads `get_event` again.”
+State:
 
-Select **Create Testnet proof event**. The generated client creates a unique
-one-seat evidence record on the deployed contract. The UI does not enable
-reservations for this proof-only event. It transfers no XLM; the wallet pays
-only the Testnet network fee. Review the invocation in the wallet, approve it,
-and point to simulation → awaiting signature → submitted → pending → confirmed.
-Open the returned explorer link and then show the correlated contract read.
+“Twenty-seven Rust tests, fifty-three frontend tests, and four Playwright journeys
+validate both contracts, both generated clients, the responsive app, and the
+browser flows. CI retains the Playwright report and screenshots.”
 
-Do not imply that automation approved a wallet request. This live step is
-performed only when the wallet holder is present and chooses to sign.
+## 1:20–1:35 — Public proof
 
-## 2:30–2:50 — Published on-chain evidence
+Open:
 
-Open the Stellar Expert Testnet contract:
+- deployed RSVP contract:
+  `CBIT5JKA4XGV37FIIMXNSXQNHTYC52P7J65JO6J3QRYQ3YP3DIZPZRRN`;
+- reservation / native SAC transfer:
+  `2036256aecb600793f87980cd02df92ba8eb3fae4b3ffb14901cb370f9cf83d3`;
+- scanner-signed refund:
+  `291d1d02ad1a741b22db56440293fd8b65813ca7002387573505dae65f163bdb`.
 
-`CBIT5JKA4XGV37FIIMXNSXQNHTYC52P7J65JO6J3QRYQ3YP3DIZPZRRN`
+Close:
 
-Show the verified `create_event` call:
-
-`f7e218954d1e4a75f5c6bbc8e6029b313592d37ab5301b7b7fa44c3e534ac83e`
-
-Then show the real 2 XLM reservation transaction:
-
-`2036256aecb600793f87980cd02df92ba8eb3fae4b3ffb14901cb370f9cf83d3`
-
-Follow it with the scanner-signed 2 XLM refund:
-
-`291d1d02ad1a741b22db56440293fd8b65813ca7002387573505dae65f163bdb`
-
-State that the contract has 22 passing Rust tests and the frontend/application
-layer has 50 unit tests plus 4 browser journeys across desktop and mobile.
-
-## 2:50–3:00 — Close
-
-“CommitPass is ready for the next evidence: two Bengaluru community pilots,
-25–35 reserving wallets each, and a measured comparison with prior turnout. We
-are asking Rise In for pilot-organizer introductions and Mainnet-readiness
-feedback—not pretending the 50-user milestone is already complete.”
+“The app is live, the code and CI are public, and the material claims are
+independently inspectable on Stellar Testnet. Testnet XLM has no cash value,
+and Mainnet custody remains gated on an independent audit and secure scanner
+operations.”
 
 ## Judge fallback
 
-If no supported wallet is available or the holder does not want to sign, show
-the live contract read and the verified historical `create_event` transaction
-instead. Do not claim the historical transaction was browser-signed during this
-session. The UI separately explains wallet unavailable, rejected request,
-wrong network, and insufficient balance.
-
-For the RSVP story, use demo mode. If the organizer camera is unavailable, copy
-the fallback code below the attendee QR, open **Enter code instead**, paste the
-complete `commitpass:pass:v1:…` payload, and verify it.
-
-The demo mode is intentionally labeled; public Testnet transactions provide the
-independent ledger evidence.
+If no compatible wallet is present, use the no-funds judge sandbox for the
+product story, then show the deployed contract, public lifecycle transactions,
+green CI run, and retained browser artifact. The sandbox is labelled and is
+never presented as a ledger transaction.

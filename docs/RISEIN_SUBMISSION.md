@@ -42,17 +42,24 @@ refund can return directly to the attendee without platform custody.
   Testnet network validation, and hardened signing;
 - explicit wallet-unavailable, rejected-request, wrong-network, and
   insufficient-balance handling;
-- a separate live Testnet proof panel that calls the deployed contract's
-  `create_event` method from the frontend, displays simulation through
-  confirmation/failure, and links a confirmed transaction hash;
+- a separate live Testnet panel that calls `create_event`, `reserve`,
+  `voucher_message`, and `claim_check_in_refund` against the deployed contract,
+  displays simulation through confirmation/failure, and links transaction
+  hashes;
 - cursor-based Stellar RPC event polling, deduplication, and authoritative
-  `get_event` reads after `event_created` sync signals;
-- Rust Soroban contract with event creation, reservation, check-in refund,
+  contract reads after create, reserve, check-in, cancellation, refund, and
+  no-show sync signals;
+- Refundable RSVP Soroban contract with event creation, reservation, check-in refund,
   attendee cancellation, organizer cancellation, pull refunds, no-show
   settlement, scanner rotation, typed events, and queries;
-- generated TypeScript client and fail-closed contract-mode configuration;
-- 22 passing contract tests, 50 frontend unit tests, and 4 browser journeys
+- Event Directory Soroban contract that reads RSVP state across contracts,
+  with a generated TypeScript client and immutable source-and-event entries;
+- generated TypeScript clients and fail-closed contract-mode configuration;
+- 27 passing contract tests, 53 frontend unit tests, and 4 browser journeys
   across desktop Chrome and mobile Chrome;
+- green GitHub Actions CI covering both contracts, both generated clients, web
+  checks, and retained Playwright evidence, plus a reproducible release
+  workflow;
 - public Stellar Testnet contract:
   `CBIT5JKA4XGV37FIIMXNSXQNHTYC52P7J65JO6J3QRYQ3YP3DIZPZRRN`;
 - a verified public `create_event` contract call:
@@ -68,9 +75,11 @@ refund can return directly to the attendee without platform custody.
 In the public Testnet lifecycle, the scanner did not sign a hand-rolled JSON
 string: it asked the deployed contract for canonical Soroban XDR bytes
 containing the voucher, network ID, contract ID, and domain separator. The
-hosted judge sandbox is clearly separate and demonstrates strict pass
-validation, replay rejection, and real local Ed25519 signing without sending
-funds.
+deployed RSVP contract calls Stellar's native XLM SAC for custody. A second
+Event Directory contract calls RSVP read methods and is covered by CI and tests;
+it is not represented as publicly deployed. The hosted judge sandbox remains
+clearly separate and demonstrates strict pass validation and replay rejection
+without sending funds.
 
 ## Security model
 
@@ -124,23 +133,31 @@ Mainnet readiness gates after the Testnet cohorts.
 - Refund proof:
   https://stellar.expert/explorer/testnet/tx/291d1d02ad1a741b22db56440293fd8b65813ca7002387573505dae65f163bdb
 - Demo script: `docs/DEMO_SCRIPT.md`
+- Green CI:
+  https://github.com/himanshu748/commitpass-stellar-rsvp/actions/runs/30139625279
+- Orange demo video:
+  https://commitpass-stellar-rsvp.a-9724.chatgpt.site/commitpass-orange-demo.mp4
 
-## Yellow Belt submission copy
+## Historical Yellow Belt submission copy
+
+The following copy records the earlier Yellow milestone. Its create-only proof
+description is intentionally historical; the current Orange implementation
+adds the live reservation and refund actions documented below.
 
 ### Short description
 
-CommitPass now uses the official Stellar Wallets Kit 2.5.0 multi-wallet modal
-and calls a deployed Soroban contract from the browser. A connected Testnet
-wallet can create a unique one-seat proof event through `create_event`; the
-proof UI enables no reservations, the write transfers no tokens, and it costs
-only the Testnet network fee. The UI shows
+At the Yellow milestone, CommitPass used the official Stellar Wallets Kit 2.5.0
+multi-wallet modal and called a deployed Soroban contract from the browser. A
+connected Testnet wallet could create a unique one-seat proof event through
+`create_event`; the then-current proof UI enabled no reservations, the write
+transferred no tokens, and it cost only the Testnet network fee. The UI showed
 simulation, wallet confirmation, submission, pending, confirmed, and failed
 states, with specific messages for wallet unavailable, rejected request, wrong
 network, and insufficient balance.
 
-The frontend also reads an existing event from the deployed contract and polls
-successful application events through the Stellar RPC cursor API. Events are
-treated only as synchronization hints: after `event_created`, CommitPass reads
+The frontend also read an existing event from the deployed contract and polled
+successful application events through the Stellar RPC cursor API. Events were
+treated only as synchronization hints: after `event_created`, CommitPass read
 the correlated event ID and organizer from `get_event` rather than trusting the
 event payload as application state.
 
@@ -180,15 +197,79 @@ requires the wallet holder to review and approve it.
 - [x] Final Git history contains at least two meaningful Yellow implementation
   commits (`0820e1b` wallet kit; `fbb8ecd` contract proof and event sync).
 
+## Orange Belt submission copy
+
+### Short description
+
+CommitPass is a complete responsive Stellar mini-dApp for refundable event
+RSVPs. A Testnet wallet creates an event, reserves a seat with a 0.001 XLM
+commitment, receives a short-lived event-scoped Ed25519 check-in voucher, and
+submits it for an atomic full refund. The browser re-reads authoritative
+contract state after lifecycle event signals and exposes loading, rejection,
+wrong-network, and insufficient-balance states on desktop and mobile.
+
+The deployed Refundable RSVP contract performs load-bearing inter-contract
+calls to Stellar's native XLM SAC. A second custom Event Directory contract
+reads RSVP state across contracts and is tested and built in CI. The directory
+is not claimed as a public deployment; public deployment proof in this
+submission refers to Refundable RSVP and the native Testnet XLM SAC.
+
+### Technical proof
+
+- Live production mini-dApp:
+  https://commitpass-stellar-rsvp.a-9724.chatgpt.site
+- Public repository:
+  https://github.com/himanshu748/commitpass-stellar-rsvp
+- Green CI run:
+  https://github.com/himanshu748/commitpass-stellar-rsvp/actions/runs/30139625279
+- Deployed RSVP contract:
+  `CBIT5JKA4XGV37FIIMXNSXQNHTYC52P7J65JO6J3QRYQ3YP3DIZPZRRN`
+- Native Testnet XLM SAC:
+  `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`
+- Deployment transaction:
+  `6e748b3100fd70f03c10dadabbb62f0b064c0357a923bea7691b1ba084776f51`
+- Reservation / XLM SAC transfer proof:
+  `2036256aecb600793f87980cd02df92ba8eb3fae4b3ffb14901cb370f9cf83d3`
+- Scanner-signed refund proof:
+  `291d1d02ad1a741b22db56440293fd8b65813ca7002387573505dae65f163bdb`
+- Orange demo video:
+  https://commitpass-stellar-rsvp.a-9724.chatgpt.site/commitpass-orange-demo.mp4
+
+### Orange submission checklist
+
+- [x] Public repository with complete setup, architecture, security, and
+  deployment documentation.
+- [x] More than 10 meaningful commits (20 at the verified CI commit).
+- [x] Responsive production frontend and explicit loading/error states.
+- [x] Complete wallet-approved create → reserve → signed check-in → refund
+  Testnet browser lifecycle.
+- [x] Advanced custody, authorization, replay resistance, cancellation,
+  refund, and no-show contract logic.
+- [x] Load-bearing inter-contract communication with the native XLM SAC.
+- [x] Second custom Event Directory contract with cross-contract RSVP reads.
+- [x] Cursor-based event streaming with deduplication, retry, and authoritative
+  state reconciliation.
+- [x] 27 Rust tests, 53 frontend tests, and four desktop/mobile Playwright
+  journeys.
+- [x] GitHub Actions CI and reproducible contract/frontend release workflow.
+- [x] Public Testnet contract address, deployment hash, reservation hash, and
+  refund hash.
+- [x] CI retains a Playwright HTML report and screenshots as a workflow
+  artifact.
+- [x] Mobile UI screenshot: `docs/screenshots/orange-mobile.png`.
+- [x] Green CI/CD screenshot: `docs/screenshots/orange-ci.png`.
+- [x] Four-passing-tests screenshot: `docs/screenshots/orange-tests.png`.
+- [x] One-to-two-minute narrated evidence video.
+
 ## Belt mapping
 
 | Public criterion | CommitPass evidence |
 | --- | --- |
 | White — wallet/balance/transaction | live multi-wallet Testnet connection, native XLM balance from Horizon, optional user-approved payment, pending/success/failure UI, and a real transaction hash |
 | Yellow — multi-wallet/contracts/events | official Stellar Wallets Kit modal, four explicit wallet/transaction errors, frontend `create_event` call to the deployed Testnet contract, complete transaction status, cursor-based event sync, authoritative reads, and public call hash |
-| Orange — mini-dApp/tests/deployment | supplementary evidence only: responsive sandbox UI, tests, CI workflow, Testnet deployment, and real CLI lifecycle proof; higher-belt video and other rubric items are not claimed |
+| Orange — mini-dApp/tests/deployment | complete contract-backed browser lifecycle, two custom Soroban contracts, load-bearing XLM SAC call, event reconciliation, responsive errors, 27 Rust tests, 53 frontend tests, four browser journeys, green CI/CD, release workflow, public deployment proof, screenshots, and 78-second video |
 | Idea approval | requires submission and Rise In decision |
-| Green — production MVP | next milestone: contract-backed UI provider, secure scanner relay/keystore, fresh Testnet pilot |
+| Green — production MVP | next milestone: isolated scanner signer or secure keystore, fresh Testnet pilots, and production-readiness review |
 | Blue — 50 users/feedback/deck/demo | deck and demo ready; two-event 50-user pilot still to execute |
 | Black — Mainnet/20 users/security/growth | explicitly not claimed; gated by audit and pilots |
 

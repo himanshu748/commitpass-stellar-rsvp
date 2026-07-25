@@ -265,6 +265,71 @@ describe("CommitPass contract event polling", () => {
     expect(timers.size).toBe(0);
   });
 
+  it("keeps the prior cursor and retries the same event when onEvents rejects", async () => {
+    const event = applicationEvent("event-retried");
+    const getEvents = vi.fn<ContractEventRpc["getEvents"]>(async () =>
+      page([event], "cursor-after-event"),
+    );
+    const handlerError = new Error("Authoritative read failed");
+    const onEvents = vi
+      .fn()
+      .mockRejectedValueOnce(handlerError)
+      .mockResolvedValueOnce(undefined);
+    const onError = vi.fn();
+    const onPoll = vi.fn();
+    const timers = new ManualTimers();
+    const poller = createContractEventPoller({
+      rpc: {
+        getLatestLedger: vi.fn(async () => ({ sequence: 1 })),
+        getEvents,
+      },
+      contractId: PUBLIC_TESTNET_CONTRACT_ID,
+      initialCursor: "cursor-before-event",
+      intervalMs: 400,
+      timers,
+      onEvents,
+      onError,
+      onPoll,
+    });
+
+    poller.start();
+    await flushAsyncWork();
+
+    expect(onEvents).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith(handlerError, {
+      attempt: 1,
+      delayMs: 400,
+      cursor: "cursor-before-event",
+    });
+    expect(onPoll).not.toHaveBeenCalled();
+    expect(poller.getCursor()).toBe("cursor-before-event");
+
+    expect(timers.runNext()).toBe(true);
+    await flushAsyncWork();
+
+    expect(getEvents).toHaveBeenCalledTimes(2);
+    expect(getEvents.mock.calls[0]?.[0]).toMatchObject({
+      cursor: "cursor-before-event",
+    });
+    expect(getEvents.mock.calls[1]?.[0]).toMatchObject({
+      cursor: "cursor-before-event",
+    });
+    expect(onEvents).toHaveBeenCalledTimes(2);
+    expect(
+      onEvents.mock.calls[0]?.[0].map(
+        (decoded: CommitPassContractEvent) => decoded.id,
+      ),
+    ).toEqual(["event-retried"]);
+    expect(onEvents.mock.calls[1]?.[0]).toEqual(onEvents.mock.calls[0]?.[0]);
+    expect(poller.getCursor()).toBe("cursor-after-event");
+    expect(onPoll).toHaveBeenCalledWith({
+      cursor: "cursor-after-event",
+      eventCount: 1,
+    });
+
+    poller.stop();
+  });
+
   it("reports recovery after an error even when the next page is empty", async () => {
     const getEvents = vi
       .fn<ContractEventRpc["getEvents"]>()

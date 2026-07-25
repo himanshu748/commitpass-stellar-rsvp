@@ -105,6 +105,24 @@ type LiveProofTarget = {
   expectedOrganizer?: string;
 };
 
+const RECONCILED_LIFECYCLE_EVENTS = new Set([
+  "event_created",
+  "reserved",
+  "checked_in",
+  "attendee_cancelled",
+  "event_cancelled",
+  "event_refund",
+  "no_show",
+]);
+
+const RESERVATION_LIFECYCLE_EVENTS = new Set([
+  "reserved",
+  "checked_in",
+  "attendee_cancelled",
+  "event_refund",
+  "no_show",
+]);
+
 type CommitPassContextValue = {
   walletAddress: string | null;
   walletName: string | null;
@@ -207,8 +225,18 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
     eventId: PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
   });
 
-  const refreshLiveContractRead = useCallback(async () => {
+  const reconcileLiveContractState = useCallback(async ({
+    reservationAttendee,
+    propagateError = false,
+  }: {
+    reservationAttendee?: string;
+    propagateError?: boolean;
+  } = {}) => {
     const target = liveProofTargetRef.current;
+    const walletSessionId =
+      reservationAttendee === undefined
+        ? undefined
+        : walletSessionIdRef.current;
     setLiveContractProof((current) => ({
       ...current,
       targetEventId: target.eventId,
@@ -218,8 +246,19 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
     try {
       const { createRefundableRsvpAdapter } = await import("../lib/contract");
       const adapter = createRefundableRsvpAdapter(PUBLIC_TESTNET_CONFIG);
-      const event = await adapter.getEvent(target.eventId);
-      if (liveProofTargetRef.current.eventId !== target.eventId) return;
+      const [event, reservation] = await Promise.all([
+        adapter.getEvent(target.eventId),
+        reservationAttendee === undefined
+          ? Promise.resolve(null)
+          : adapter.getReservation(target.eventId, reservationAttendee),
+      ]);
+      if (
+        liveProofTargetRef.current.eventId !== target.eventId ||
+        (walletSessionId !== undefined &&
+          walletSessionIdRef.current !== walletSessionId)
+      ) {
+        return;
+      }
       if (
         target.expectedOrganizer &&
         event.organizer !== target.expectedOrganizer
@@ -235,16 +274,42 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
         event,
         readError: undefined,
       }));
+      if (reservation) {
+        const isTerminal = reservation.status !== "Reserved";
+        if (isTerminal) {
+          liveProofScannerSignerRef.current?.destroy();
+          liveProofScannerSignerRef.current = null;
+        }
+        setLiveContractLifecycle((current) => ({
+          ...current,
+          reservation,
+          scannerReady: isTerminal ? false : current.scannerReady,
+        }));
+      }
     } catch (error) {
-      if (liveProofTargetRef.current.eventId !== target.eventId) return;
+      if (
+        liveProofTargetRef.current.eventId !== target.eventId ||
+        (walletSessionId !== undefined &&
+          walletSessionIdRef.current !== walletSessionId)
+      ) {
+        return;
+      }
       const normalized = normalizeTransactionError(error);
       setLiveContractProof((current) => ({
         ...current,
         readStatus: "error",
         readError: normalized.message,
       }));
+      if (propagateError) {
+        throw error;
+      }
     }
   }, []);
+
+  const refreshLiveContractRead = useCallback(
+    () => reconcileLiveContractState(),
+    [reconcileLiveContractState],
+  );
 
   useEffect(() => {
     void refreshLiveContractRead();
@@ -296,24 +361,28 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
             });
 
             const target = liveProofTargetRef.current;
-            const relevantLifecycleEvent = events.find(
+            const relevantLifecycleEvents = events.filter(
               (event) =>
                 event.eventId === target.eventId &&
-                [
-                  "event_created",
-                  "reserved",
-                  "checked_in",
-                  "reservation_cancelled",
-                  "event_cancelled",
-                  "event_refunded",
-                  "no_show",
-                ].includes(event.name) &&
+                RECONCILED_LIFECYCLE_EVENTS.has(event.name) &&
                 (!target.expectedOrganizer ||
                   event.name !== "event_created" ||
                   event.account === target.expectedOrganizer),
             );
-            if (!relevantLifecycleEvent) return;
-            await refreshLiveContractRead();
+            if (relevantLifecycleEvents.length === 0) return;
+            const refreshReservation = relevantLifecycleEvents.some(
+              (event) =>
+                walletMode === "live" &&
+                walletAddress !== null &&
+                event.account === walletAddress &&
+                RESERVATION_LIFECYCLE_EVENTS.has(event.name),
+            );
+            await reconcileLiveContractState({
+              ...(refreshReservation && walletAddress
+                ? { reservationAttendee: walletAddress }
+                : {}),
+              propagateError: true,
+            });
           },
           onPoll: () => {
             if (controller.signal.aborted) return;
@@ -355,7 +424,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       controller.abort();
       stop?.();
     };
-  }, [refreshLiveContractRead]);
+  }, [reconcileLiveContractState, walletAddress, walletMode]);
 
   useEffect(() => {
     let disposed = false;

@@ -133,6 +133,10 @@ function WalletHarness() {
         {liveContractProof.targetEventId}|
         {liveContractProof.event?.id ?? "none"}
       </output>
+      <output data-testid="proof-read-state">
+        {liveContractProof.readStatus}|
+        {liveContractProof.readError ?? "none"}
+      </output>
       <output data-testid="scanner-key">
         {scannerPublicKey ?? "initializing"}
       </output>
@@ -279,6 +283,168 @@ describe("CommitPassProvider wallet lifecycle", () => {
       "none|none|idle",
     );
     expect(loadTestnetXlmBalance).not.toHaveBeenCalled();
+  });
+
+  it("reconciles emitted cancellation and event-refund names with the connected attendee reservation", async () => {
+    const user = userEvent.setup();
+    render(
+      <CommitPassProvider>
+        <WalletHarness />
+      </CommitPassProvider>,
+    );
+
+    await waitFor(() => expect(pollerMocks.start).toHaveBeenCalledOnce());
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-state")).toHaveTextContent(
+        `${ACCOUNT}|live|ready|12.345`,
+      ),
+    );
+    await waitFor(() => expect(pollerMocks.start).toHaveBeenCalledTimes(2));
+
+    const pollerOptions = pollerMocks.options as ContractEventPollerOptions;
+    const attendeeRefunded = {
+      status: "AttendeeRefunded" as const,
+      reservedAt: 1_899_999_900,
+      settledAt: 1_900_000_001,
+    };
+    contractMocks.getEvent.mockClear();
+    contractMocks.getReservation.mockResolvedValueOnce(attendeeRefunded);
+
+    await act(async () => {
+      await pollerOptions.onEvents([
+        {
+          id: "attendee-cancelled-event",
+          ledger: 502,
+          txHash: "3".repeat(64),
+          name: "attendee_cancelled",
+          eventId: PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+          account: ACCOUNT,
+          payload: {},
+          cursor: "attendee-cancelled-cursor",
+        },
+      ]);
+    });
+
+    expect(contractMocks.getEvent).toHaveBeenCalledWith(
+      PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+    );
+    expect(contractMocks.getReservation).toHaveBeenCalledWith(
+      PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+      ACCOUNT,
+    );
+    expect(screen.getByTestId("lifecycle-state")).toHaveTextContent(
+      "AttendeeRefunded|scanner-off|idle",
+    );
+
+    const eventRefunded = {
+      ...attendeeRefunded,
+      status: "EventRefunded" as const,
+    };
+    contractMocks.getEvent.mockClear();
+    contractMocks.getReservation.mockClear();
+    contractMocks.getReservation.mockResolvedValueOnce(eventRefunded);
+
+    await act(async () => {
+      await pollerOptions.onEvents([
+        {
+          id: "event-refund-event",
+          ledger: 503,
+          txHash: "4".repeat(64),
+          name: "event_refund",
+          eventId: PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+          account: ACCOUNT,
+          payload: {},
+          cursor: "event-refund-cursor",
+        },
+      ]);
+    });
+
+    expect(contractMocks.getEvent).toHaveBeenCalledWith(
+      PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+    );
+    expect(contractMocks.getReservation).toHaveBeenCalledWith(
+      PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+      ACCOUNT,
+    );
+    expect(screen.getByTestId("lifecycle-state")).toHaveTextContent(
+      "EventRefunded|scanner-off|idle",
+    );
+  });
+
+  it("propagates an event-driven read failure so the same reservation signal can be retried", async () => {
+    const user = userEvent.setup();
+    render(
+      <CommitPassProvider>
+        <WalletHarness />
+      </CommitPassProvider>,
+    );
+
+    await waitFor(() => expect(pollerMocks.start).toHaveBeenCalledOnce());
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-state")).toHaveTextContent(
+        `${ACCOUNT}|live|ready|12.345`,
+      ),
+    );
+    await waitFor(() => expect(pollerMocks.start).toHaveBeenCalledTimes(2));
+
+    const pollerOptions = pollerMocks.options as ContractEventPollerOptions;
+    const reserved = {
+      status: "Reserved" as const,
+      reservedAt: 1_899_999_900,
+      settledAt: null,
+    };
+    const readFailure = new Error("Reservation RPC read failed.");
+    contractMocks.getEvent.mockClear();
+    contractMocks.getReservation
+      .mockRejectedValueOnce(readFailure)
+      .mockResolvedValueOnce(reserved);
+    const reservationEvent = {
+      id: "reservation-retry-event",
+      ledger: 504,
+      txHash: "5".repeat(64),
+      name: "reserved",
+      eventId: PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+      account: ACCOUNT,
+      payload: {},
+      cursor: "reservation-retry-cursor",
+    };
+
+    await act(async () => {
+      await expect(
+        pollerOptions.onEvents([reservationEvent]),
+      ).rejects.toThrow(readFailure);
+    });
+    expect(screen.getByTestId("proof-read-state")).toHaveTextContent(
+      "error|Reservation RPC read failed.",
+    );
+
+    await act(async () => {
+      await pollerOptions.onEvents([reservationEvent]);
+    });
+    expect(contractMocks.getEvent).toHaveBeenCalledTimes(2);
+    expect(contractMocks.getReservation).toHaveBeenCalledTimes(2);
+    expect(contractMocks.getReservation).toHaveBeenLastCalledWith(
+      PUBLIC_TESTNET_VERIFICATION_EVENT_ID,
+      ACCOUNT,
+    );
+    expect(screen.getByTestId("proof-read-state")).toHaveTextContent(
+      "ready|none",
+    );
+    expect(screen.getByTestId("lifecycle-state")).toHaveTextContent(
+      "Reserved|scanner-off|idle",
+    );
+
+    contractMocks.getEvent.mockRejectedValueOnce(
+      new Error("Manual event refresh failed."),
+    );
+    await user.click(screen.getByRole("button", { name: "Refresh proof" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("proof-read-state")).toHaveTextContent(
+        "error|Manual event refresh failed.",
+      ),
+    );
   });
 
   it("creates a fresh proof event, tracks its lifecycle, and reconciles only that event", async () => {
