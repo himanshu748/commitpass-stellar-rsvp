@@ -17,11 +17,19 @@ import {
 } from "../data/demo";
 import {
   asHex32,
+  asHex64,
+  secureRandomBytes,
   sha256,
   utf8ToBytes,
 } from "../lib/bytes";
-import type { OnChainEvent } from "../lib/contract";
-import { CommitPassError } from "../lib/domain";
+import type {
+  OnChainEvent,
+  OnChainReservation,
+} from "../lib/contract";
+import {
+  CommitPassError,
+  type CheckInVoucher,
+} from "../lib/domain";
 import { EphemeralScannerSigner } from "../lib/scanner-crypto";
 import {
   DEMO_ATTENDEE_ADDRESS,
@@ -86,6 +94,12 @@ type LiveContractProofState = {
   events: ContractActivityItem[];
 };
 
+type LiveContractLifecycleState = {
+  reservation: OnChainReservation | null;
+  scannerReady: boolean;
+  transaction: TransactionState;
+};
+
 type LiveProofTarget = {
   eventId: string;
   expectedOrganizer?: string;
@@ -98,6 +112,7 @@ type CommitPassContextValue = {
   testnetBalance: TestnetBalanceState;
   liveTestnetPayment: LiveTestnetPaymentState;
   liveContractProof: LiveContractProofState;
+  liveContractLifecycle: LiveContractLifecycleState;
   reservationStatus: ReservationStatus;
   transaction: TransactionState;
   arrivals: Arrival[];
@@ -112,6 +127,8 @@ type CommitPassContextValue = {
     amount: string,
   ) => Promise<boolean>;
   createLiveContractProof: () => Promise<boolean>;
+  reserveLiveProofEvent: () => Promise<boolean>;
+  claimLiveProofRefund: () => Promise<boolean>;
   refreshLiveContractRead: () => Promise<void>;
   reserveSpot: () => Promise<void>;
   simulateVoucher: () => Promise<void>;
@@ -136,12 +153,13 @@ const demoHash = (kind: string) =>
 
 function transactionStateFromStatus(
   status: CanonicalTransactionStatus,
+  kind: NonNullable<TransactionState>["kind"] = "create-event",
 ): TransactionState {
   if (status.phase === "idle") {
     return null;
   }
   return {
-    kind: "create-event",
+    kind,
     mode: "contract",
     status: status.phase,
     hash: status.hash,
@@ -167,6 +185,12 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       syncMessage: "Connecting to Stellar RPC event history…",
       events: [],
     });
+  const [liveContractLifecycle, setLiveContractLifecycle] =
+    useState<LiveContractLifecycleState>({
+      reservation: null,
+      scannerReady: false,
+      transaction: null,
+    });
   const [reservationStatus, setReservationStatus] =
     useState<ReservationStatus>("unreserved");
   const [transaction, setTransaction] = useState<TransactionState>(null);
@@ -174,6 +198,8 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [scannerPublicKey, setScannerPublicKey] = useState<string | null>(null);
   const scannerSignerRef = useRef<EphemeralScannerSigner | null>(null);
+  const liveProofScannerSignerRef =
+    useRef<EphemeralScannerSigner | null>(null);
   const usedScannerNoncesRef = useRef(new Set<string>());
   const balanceRequestIdRef = useRef(0);
   const walletSessionIdRef = useRef(0);
@@ -270,14 +296,23 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
             });
 
             const target = liveProofTargetRef.current;
-            const created = events.find(
+            const relevantLifecycleEvent = events.find(
               (event) =>
-                event.name === "event_created" &&
                 event.eventId === target.eventId &&
+                [
+                  "event_created",
+                  "reserved",
+                  "checked_in",
+                  "reservation_cancelled",
+                  "event_cancelled",
+                  "event_refunded",
+                  "no_show",
+                ].includes(event.name) &&
                 (!target.expectedOrganizer ||
+                  event.name !== "event_created" ||
                   event.account === target.expectedOrganizer),
             );
-            if (!created) return;
+            if (!relevantLifecycleEvent) return;
             await refreshLiveContractRead();
           },
           onPoll: () => {
@@ -338,6 +373,14 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       scannerSignerRef.current = null;
     };
   }, []);
+
+  useEffect(
+    () => () => {
+      liveProofScannerSignerRef.current?.destroy();
+      liveProofScannerSignerRef.current = null;
+    },
+    [],
+  );
 
   const pushToast = useCallback(
     (tone: Toast["tone"], title: string, message: string) => {
@@ -400,6 +443,13 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
     setWalletMode("demo");
     setTestnetBalance({ status: "idle" });
     setLiveTestnetPayment(null);
+    liveProofScannerSignerRef.current?.destroy();
+    liveProofScannerSignerRef.current = null;
+    setLiveContractLifecycle({
+      reservation: null,
+      scannerReady: false,
+      transaction: null,
+    });
     pushToast(
       "success",
       "Demo wallet ready",
@@ -444,6 +494,13 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
     setWalletMode(null);
     setTestnetBalance({ status: "idle" });
     setLiveTestnetPayment(null);
+    liveProofScannerSignerRef.current?.destroy();
+    liveProofScannerSignerRef.current = null;
+    setLiveContractLifecycle({
+      reservation: null,
+      scannerReady: false,
+      transaction: null,
+    });
 
     let disconnectError: unknown;
     try {
@@ -589,6 +646,13 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
     }
 
     const sessionId = walletSessionIdRef.current;
+    liveProofScannerSignerRef.current?.destroy();
+    liveProofScannerSignerRef.current = null;
+    setLiveContractLifecycle({
+      reservation: null,
+      scannerReady: false,
+      transaction: null,
+    });
     let proofScannerSigner: EphemeralScannerSigner | null = null;
     try {
       const [{ createRefundableRsvpAdapter, createSecureEventSalt }, wallet] =
@@ -603,7 +667,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
         await sha256(
           utf8ToBytes(
             [
-              "commitpass-yellow-proof-v1",
+              "commitpass-orange-live-lifecycle-v1",
               walletAddress,
               eventSalt,
               String(now),
@@ -620,11 +684,11 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
           eventSalt,
           organizer: walletAddress,
           metadataHash,
-          startAt: now + 3_600,
-          checkInDeadline: now + 7_200,
-          endAt: now + 10_800,
+          startAt: now + 60,
+          checkInDeadline: now + 660,
+          endAt: now + 900,
           token: PUBLIC_TESTNET_CONFIG.xlmSacId,
-          depositAmount: 1n,
+          depositAmount: 10_000n,
           capacity: 1,
           noShowBeneficiary: walletAddress,
           cancellationPolicy: "FullRefund",
@@ -647,6 +711,8 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
           "The confirmed proof event belongs to a different organizer.",
         );
       }
+      liveProofScannerSignerRef.current = proofScannerSigner;
+      proofScannerSigner = null;
       liveProofTargetRef.current = {
         eventId: receipt.result.id,
         expectedOrganizer: walletAddress,
@@ -665,10 +731,15 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
             "Proof event confirmed. Event polling will reconcile the emitted contract event.",
         },
       }));
+      setLiveContractLifecycle({
+        reservation: null,
+        scannerReady: true,
+        transaction: null,
+      });
       pushToast(
         "success",
-        "Contract proof confirmed",
-        "The new event record is public on Stellar Testnet; no tokens were transferred.",
+        "Live event created",
+        "Reserve the 0.001 Testnet XLM commitment before the one-minute check-in window opens.",
       );
       await loadTestnetBalanceForAddress(walletAddress);
       return true;
@@ -701,6 +772,287 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
     loadTestnetBalanceForAddress,
     pushToast,
     testnetBalance,
+    walletAddress,
+    walletMode,
+  ]);
+
+  const reserveLiveProofEvent = useCallback(async () => {
+    const event = liveContractProof.event;
+    if (walletMode !== "live" || !walletAddress) {
+      pushToast(
+        "error",
+        "Connect a Testnet wallet",
+        "A live Stellar wallet is required to reserve this event.",
+      );
+      return false;
+    }
+    if (
+      !event ||
+      event.id !== liveContractProof.targetEventId ||
+      event.organizer !== walletAddress ||
+      !liveContractLifecycle.scannerReady
+    ) {
+      pushToast(
+        "error",
+        "Create a fresh proof event",
+        "The reserve step requires the event-scoped scanner signer from this browser session.",
+      );
+      return false;
+    }
+    if (Math.floor(Date.now() / 1_000) >= event.startAt) {
+      pushToast(
+        "error",
+        "Reservation window closed",
+        "Create a fresh proof event and reserve before its check-in window opens.",
+      );
+      return false;
+    }
+
+    const sessionId = walletSessionIdRef.current;
+    try {
+      const [{ createRefundableRsvpAdapter }, wallet] = await Promise.all([
+        import("../lib/contract"),
+        import("../lib/wallet"),
+      ]);
+      const adapter = createRefundableRsvpAdapter(
+        PUBLIC_TESTNET_CONFIG,
+        wallet.getConnectedTestnetWalletAdapter(),
+      );
+      const receipt = await adapter.reserve(event.id, walletAddress, {
+        timeoutInSeconds: 60,
+        onStatus: (status) => {
+          if (sessionId !== walletSessionIdRef.current) return;
+          setLiveContractLifecycle((current) => ({
+            ...current,
+            transaction: transactionStateFromStatus(status, "reserve"),
+          }));
+        },
+      });
+      if (sessionId !== walletSessionIdRef.current) return false;
+      if (receipt.result.status !== "Reserved") {
+        throw new Error(
+          `The confirmed reservation has unexpected status ${receipt.result.status}.`,
+        );
+      }
+
+      const [reservation, authoritativeEvent] = await Promise.all([
+        adapter.getReservation(event.id, walletAddress),
+        adapter.getEvent(event.id),
+      ]);
+      if (sessionId !== walletSessionIdRef.current) return false;
+      setLiveContractLifecycle((current) => ({
+        ...current,
+        reservation,
+        transaction: {
+          kind: "reserve",
+          mode: "contract",
+          status: "confirmed",
+          hash: receipt.hash,
+          message:
+            "Reservation confirmed and reconciled from contract storage. 0.001 Testnet XLM is held by the contract.",
+        },
+      }));
+      setLiveContractProof((current) => ({
+        ...current,
+        event: authoritativeEvent,
+      }));
+      pushToast(
+        "success",
+        "Testnet commitment reserved",
+        "The contract now holds 0.001 Testnet XLM. Check-in opens one minute after event creation.",
+      );
+      await loadTestnetBalanceForAddress(walletAddress);
+      return true;
+    } catch (error) {
+      if (sessionId !== walletSessionIdRef.current) return false;
+      const normalized = normalizeTransactionError(error);
+      setLiveContractLifecycle((current) => ({
+        ...current,
+        transaction: {
+          kind: "reserve",
+          mode: "contract",
+          status: "failed",
+          message: normalized.message,
+        },
+      }));
+      pushToast(
+        "error",
+        normalized.category === "wallet-rejected"
+          ? "Reservation cancelled"
+          : "Reservation failed",
+        normalized.message,
+      );
+      return false;
+    }
+  }, [
+    liveContractLifecycle.scannerReady,
+    liveContractProof.event,
+    liveContractProof.targetEventId,
+    loadTestnetBalanceForAddress,
+    pushToast,
+    walletAddress,
+    walletMode,
+  ]);
+
+  const claimLiveProofRefund = useCallback(async () => {
+    const event = liveContractProof.event;
+    const signer = liveProofScannerSignerRef.current;
+    if (walletMode !== "live" || !walletAddress) {
+      pushToast(
+        "error",
+        "Connect a Testnet wallet",
+        "A live Stellar wallet is required to claim the refund.",
+      );
+      return false;
+    }
+    if (
+      !event ||
+      event.id !== liveContractProof.targetEventId ||
+      event.organizer !== walletAddress ||
+      !signer ||
+      !liveContractLifecycle.scannerReady
+    ) {
+      pushToast(
+        "error",
+        "Scanner session unavailable",
+        "Create a fresh proof event in this browser to use its ephemeral scanner key.",
+      );
+      return false;
+    }
+    if (liveContractLifecycle.reservation?.status !== "Reserved") {
+      pushToast(
+        "error",
+        "Reserve first",
+        "A confirmed reservation is required before check-in.",
+      );
+      return false;
+    }
+
+    const now = Math.floor(Date.now() / 1_000);
+    if (now < event.startAt) {
+      pushToast(
+        "info",
+        "Check-in is not open",
+        `The live check-in window opens in ${event.startAt - now} seconds.`,
+      );
+      return false;
+    }
+    if (now > event.checkInDeadline) {
+      pushToast(
+        "error",
+        "Check-in window closed",
+        "Create a fresh proof event to repeat the lifecycle.",
+      );
+      return false;
+    }
+
+    const voucher: CheckInVoucher = {
+      eventId: event.id,
+      attendee: walletAddress,
+      nonce: asHex32(secureRandomBytes(32)),
+      checkedInAt: now,
+      expiresAt: Math.min(now + 60, event.checkInDeadline),
+    };
+    const sessionId = walletSessionIdRef.current;
+    try {
+      const [{ createRefundableRsvpAdapter }, wallet] = await Promise.all([
+        import("../lib/contract"),
+        import("../lib/wallet"),
+      ]);
+      const adapter = createRefundableRsvpAdapter(
+        PUBLIC_TESTNET_CONFIG,
+        wallet.getConnectedTestnetWalletAdapter(),
+      );
+      const canonicalMessage = await adapter.voucherMessage(voucher);
+      const signature = asHex64(await signer.sign(canonicalMessage));
+      const receipt = await adapter.claimCheckInRefund(
+        {
+          eventId: event.id,
+          attendee: walletAddress,
+          voucher,
+          signature,
+        },
+        {
+          timeoutInSeconds: 60,
+          onStatus: (status) => {
+            if (sessionId !== walletSessionIdRef.current) return;
+            setLiveContractLifecycle((current) => ({
+              ...current,
+              transaction: transactionStateFromStatus(status, "refund"),
+            }));
+          },
+        },
+      );
+      if (sessionId !== walletSessionIdRef.current) return false;
+      if (receipt.result.status !== "CheckedIn") {
+        throw new Error(
+          `The confirmed check-in has unexpected status ${receipt.result.status}.`,
+        );
+      }
+
+      const [reservation, authoritativeEvent] = await Promise.all([
+        adapter.getReservation(event.id, walletAddress),
+        adapter.getEvent(event.id),
+      ]);
+      if (sessionId !== walletSessionIdRef.current) return false;
+      if (reservation.status !== "CheckedIn") {
+        throw new Error(
+          "The authoritative contract read did not confirm check-in.",
+        );
+      }
+      signer.destroy();
+      liveProofScannerSignerRef.current = null;
+      setLiveContractLifecycle({
+        reservation,
+        scannerReady: false,
+        transaction: {
+          kind: "refund",
+          mode: "contract",
+          status: "confirmed",
+          hash: receipt.hash,
+          message:
+            "Check-in confirmed and reconciled from contract storage. The 0.001 Testnet XLM commitment was returned.",
+        },
+      });
+      setLiveContractProof((current) => ({
+        ...current,
+        event: authoritativeEvent,
+      }));
+      pushToast(
+        "success",
+        "Testnet commitment refunded",
+        "The event-scoped voucher was verified on-chain and 0.001 Testnet XLM returned to the attendee.",
+      );
+      await loadTestnetBalanceForAddress(walletAddress);
+      return true;
+    } catch (error) {
+      if (sessionId !== walletSessionIdRef.current) return false;
+      const normalized = normalizeTransactionError(error);
+      setLiveContractLifecycle((current) => ({
+        ...current,
+        transaction: {
+          kind: "refund",
+          mode: "contract",
+          status: "failed",
+          message: normalized.message,
+        },
+      }));
+      pushToast(
+        "error",
+        normalized.category === "wallet-rejected"
+          ? "Refund cancelled"
+          : "Refund failed",
+        normalized.message,
+      );
+      return false;
+    }
+  }, [
+    liveContractLifecycle.reservation,
+    liveContractLifecycle.scannerReady,
+    liveContractProof.event,
+    liveContractProof.targetEventId,
+    loadTestnetBalanceForAddress,
+    pushToast,
     walletAddress,
     walletMode,
   ]);
@@ -923,6 +1275,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       testnetBalance,
       liveTestnetPayment,
       liveContractProof,
+      liveContractLifecycle,
       reservationStatus,
       transaction,
       arrivals,
@@ -934,6 +1287,8 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       refreshTestnetBalance,
       sendTestnetPayment,
       createLiveContractProof,
+      reserveLiveProofEvent,
+      claimLiveProofRefund,
       refreshLiveContractRead,
       reserveSpot,
       simulateVoucher,
@@ -946,6 +1301,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
     [
       arrivals,
       claimRefund,
+      claimLiveProofRefund,
       connectDemoWallet,
       connectLiveWallet,
       createLiveContractProof,
@@ -953,9 +1309,11 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       dismissToast,
       liveTestnetPayment,
       liveContractProof,
+      liveContractLifecycle,
       pushToast,
       refreshTestnetBalance,
       refreshLiveContractRead,
+      reserveLiveProofEvent,
       reservationStatus,
       rotateScannerKey,
       reserveSpot,

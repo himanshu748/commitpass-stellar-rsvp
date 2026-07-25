@@ -1,6 +1,9 @@
 import {
   Activity,
+  CheckCircle2,
   ChevronDown,
+  Clock3,
+  Coins,
   ExternalLink,
   FilePlus2,
   Menu,
@@ -12,7 +15,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { shortAddress } from "../data/demo";
 import {
@@ -38,12 +41,15 @@ export function AppHeader() {
     testnetBalance,
     liveTestnetPayment,
     liveContractProof,
+    liveContractLifecycle,
     connectDemoWallet,
     connectLiveWallet,
     disconnectWallet,
     refreshTestnetBalance,
     sendTestnetPayment,
     createLiveContractProof,
+    reserveLiveProofEvent,
+    claimLiveProofRefund,
     refreshLiveContractRead,
   } = useCommitPass();
   const [walletOpen, setWalletOpen] = useState(false);
@@ -54,6 +60,21 @@ export function AppHeader() {
   const [amount, setAmount] = useState("");
   const [sending, setSending] = useState(false);
   const [creatingProof, setCreatingProof] = useState(false);
+  const [reservingProof, setReservingProof] = useState(false);
+  const [claimingProof, setClaimingProof] = useState(false);
+  const [nowSeconds, setNowSeconds] = useState(() =>
+    Math.floor(Date.now() / 1_000),
+  );
+
+  useEffect(() => {
+    if (!walletOpen || walletMode !== "live") return;
+    setNowSeconds(Math.floor(Date.now() / 1_000));
+    const interval = window.setInterval(
+      () => setNowSeconds(Math.floor(Date.now() / 1_000)),
+      1_000,
+    );
+    return () => window.clearInterval(interval);
+  }, [walletMode, walletOpen]);
 
   const handleLiveConnect = async () => {
     setConnecting(true);
@@ -98,6 +119,26 @@ export function AppHeader() {
     }
   };
 
+  const handleReserveProof = async () => {
+    if (reservingProof) return;
+    setReservingProof(true);
+    try {
+      await reserveLiveProofEvent();
+    } finally {
+      setReservingProof(false);
+    }
+  };
+
+  const handleClaimProof = async () => {
+    if (claimingProof) return;
+    setClaimingProof(true);
+    try {
+      await claimLiveProofRefund();
+    } finally {
+      setClaimingProof(false);
+    }
+  };
+
   const paymentPending =
     liveTestnetPayment?.status === "signing" ||
     liveTestnetPayment?.status === "submitting";
@@ -108,6 +149,26 @@ export function AppHeader() {
     liveContractProof.transaction?.status === "submitted" ||
     liveContractProof.transaction?.status === "pending" ||
     liveContractProof.transaction?.status === "submitting";
+  const lifecyclePending =
+    liveContractLifecycle.transaction?.status === "simulating" ||
+    liveContractLifecycle.transaction?.status === "awaiting-signature" ||
+    liveContractLifecycle.transaction?.status === "signing" ||
+    liveContractLifecycle.transaction?.status === "submitted" ||
+    liveContractLifecycle.transaction?.status === "pending" ||
+    liveContractLifecycle.transaction?.status === "submitting";
+  const proofEvent = liveContractProof.event;
+  const ownsProofEvent =
+    proofEvent?.organizer === walletAddress &&
+    proofEvent.id === liveContractProof.targetEventId;
+  const proofReservation = liveContractLifecycle.reservation;
+  const secondsUntilCheckIn = proofEvent
+    ? Math.max(0, proofEvent.startAt - nowSeconds)
+    : 0;
+  const checkInOpen = Boolean(
+    proofEvent &&
+      nowSeconds >= proofEvent.startAt &&
+      nowSeconds <= proofEvent.checkInDeadline,
+  );
 
   return (
     <>
@@ -181,7 +242,7 @@ export function AppHeader() {
         description={
           walletAddress
             ? walletMode === "live"
-              ? "StellarWalletsKit connects your chosen wallet. Read the deployed contract, create a no-transfer proof event, and follow its Testnet status here."
+              ? "StellarWalletsKit connects your chosen wallet. Run the deployed create → reserve → signed check-in → refund lifecycle and follow every Testnet status here."
               : "The seeded identity exercises the RSVP flow without a wallet, funds, or network transaction."
             : "Choose a Stellar Testnet wallet through StellarWalletsKit, or use the seeded demo identity. RSVP actions remain simulated."
         }
@@ -265,8 +326,8 @@ export function AppHeader() {
                       <FilePlus2 size={20} />
                     </span>
                     <div>
-                      <small>Deployed Soroban write</small>
-                      <strong>create_event</strong>
+                      <small>Deployed Soroban lifecycle</small>
+                      <strong>create → reserve → refund</strong>
                     </div>
                     <a
                       href={`https://stellar.expert/explorer/testnet/contract/${PUBLIC_TESTNET_CONTRACT_ID}`}
@@ -283,24 +344,30 @@ export function AppHeader() {
                     </div>
                     <div>
                       <dt>Token movement</dt>
-                      <dd>None</dd>
+                      <dd>0.001 XLM lock → refund</dd>
                     </div>
                     <div>
                       <dt>Public record</dt>
-                      <dd>Permanent event metadata</dd>
+                      <dd>3 contract transactions</dd>
                     </div>
                   </dl>
                   <p className="contract-proof__copy">
                     Creates a unique one-seat proof event in{" "}
                     <code>{shortAddress(PUBLIC_TESTNET_CONTRACT_ID)}</code>.
-                    Your wallet shows the exact invocation before approval; only
-                    the Testnet network fee is charged. This proof-only event
-                    does not enable reservations.
+                    Your wallet shows each invocation before approval. The
+                    contract holds 0.001 Testnet XLM during the reservation,
+                    verifies an event-scoped Ed25519 voucher, then returns the
+                    full commitment. Testnet XLM has no cash value.
                   </p>
                   <button
                     className="button button--primary button--full"
                     type="button"
-                    disabled={creatingProof || contractPending || paymentPending}
+                    disabled={
+                      creatingProof ||
+                      contractPending ||
+                      lifecyclePending ||
+                      paymentPending
+                    }
                     onClick={() => void handleContractProof()}
                   >
                     {liveContractProof.transaction?.status ===
@@ -308,12 +375,118 @@ export function AppHeader() {
                       ? "Confirm in your wallet…"
                       : contractPending
                         ? "Waiting for Testnet…"
-                        : "Create Testnet proof event"}
+                        : "Create fresh Testnet lifecycle"}
                     <FilePlus2 size={17} />
                   </button>
                   <TransactionStatus
                     transaction={liveContractProof.transaction}
                   />
+
+                  {ownsProofEvent &&
+                  (liveContractLifecycle.scannerReady ||
+                    proofReservation) ? (
+                    <section
+                      className="live-lifecycle"
+                      aria-label="Live contract lifecycle"
+                    >
+                      <div className="live-lifecycle__step">
+                        <span
+                          className={
+                            proofReservation
+                              ? "live-lifecycle__number live-lifecycle__number--done"
+                              : "live-lifecycle__number"
+                          }
+                        >
+                          {proofReservation ? (
+                            <CheckCircle2 size={16} />
+                          ) : (
+                            "1"
+                          )}
+                        </span>
+                        <div>
+                          <strong>Reserve the commitment</strong>
+                          <small>
+                            {proofReservation
+                              ? "Authoritative read: reservation is stored on-chain."
+                              : "Approve a 0.001 Testnet XLM transfer into the RSVP contract."}
+                          </small>
+                        </div>
+                      </div>
+                      {!proofReservation ? (
+                        <button
+                          className="button button--primary button--full"
+                          type="button"
+                          disabled={
+                            reservingProof ||
+                            lifecyclePending ||
+                            contractPending ||
+                            secondsUntilCheckIn === 0
+                          }
+                          onClick={() => void handleReserveProof()}
+                        >
+                          {lifecyclePending
+                            ? "Confirm reservation in wallet…"
+                            : secondsUntilCheckIn === 0
+                              ? "Reservation window closed"
+                              : "Reserve 0.001 Testnet XLM"}
+                          <Coins size={17} />
+                        </button>
+                      ) : null}
+
+                      <div className="live-lifecycle__step">
+                        <span
+                          className={
+                            proofReservation?.status === "CheckedIn"
+                              ? "live-lifecycle__number live-lifecycle__number--done"
+                              : "live-lifecycle__number"
+                          }
+                        >
+                          {proofReservation?.status === "CheckedIn" ? (
+                            <CheckCircle2 size={16} />
+                          ) : (
+                            "2"
+                          )}
+                        </span>
+                        <div>
+                          <strong>Sign check-in & reclaim</strong>
+                          <small>
+                            {proofReservation?.status === "CheckedIn"
+                              ? "Authoritative read: CheckedIn · commitment returned."
+                              : !proofReservation
+                                ? "Available after the reservation confirms."
+                                : checkInOpen
+                                  ? "Window open · the ephemeral scanner signs a 60-second voucher."
+                                  : secondsUntilCheckIn > 0
+                                    ? `Check-in opens in ${secondsUntilCheckIn}s.`
+                                    : "The check-in window has closed."}
+                          </small>
+                        </div>
+                      </div>
+                      {proofReservation?.status === "Reserved" ? (
+                        <button
+                          className="button button--primary button--full"
+                          type="button"
+                          disabled={
+                            claimingProof ||
+                            lifecyclePending ||
+                            contractPending ||
+                            !checkInOpen
+                          }
+                          onClick={() => void handleClaimProof()}
+                        >
+                          {lifecyclePending
+                            ? "Confirm refund in wallet…"
+                            : checkInOpen
+                              ? "Check in & refund 0.001 XLM"
+                              : `Opens in ${secondsUntilCheckIn}s`}
+                          <Clock3 size={17} />
+                        </button>
+                      ) : null}
+                      <TransactionStatus
+                        transaction={liveContractLifecycle.transaction}
+                      />
+                    </section>
+                  ) : null}
 
                   <div className="contract-read">
                     <div>
@@ -456,7 +629,12 @@ export function AppHeader() {
             <button
               className="button button--outline button--full"
               type="button"
-              disabled={disconnecting || paymentPending || contractPending}
+              disabled={
+                disconnecting ||
+                paymentPending ||
+                contractPending ||
+                lifecyclePending
+              }
               onClick={handleDisconnect}
             >
               {disconnecting ? "Disconnecting…" : "Disconnect"}

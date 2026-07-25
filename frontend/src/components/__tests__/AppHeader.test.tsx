@@ -42,7 +42,7 @@ function liveContext(
         endAt: 1_900_001_200,
         token:
           "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-        depositAmount: 1n,
+        depositAmount: 10_000n,
         capacity: 1,
         seatsReserved: 0,
         outstandingDeposits: 0,
@@ -57,6 +57,11 @@ function liveContext(
       syncMessage: "Listening for new contract events.",
       events: [],
     },
+    liveContractLifecycle: {
+      reservation: null,
+      scannerReady: true,
+      transaction: null,
+    },
     reservationStatus: "unreserved",
     transaction: null,
     arrivals: [],
@@ -68,6 +73,8 @@ function liveContext(
     refreshTestnetBalance: vi.fn(async () => undefined),
     sendTestnetPayment: vi.fn(async () => true),
     createLiveContractProof: vi.fn(async () => true),
+    reserveLiveProofEvent: vi.fn(async () => true),
+    claimLiveProofRefund: vi.fn(async () => true),
     refreshLiveContractRead: vi.fn(async () => undefined),
     reserveSpot: vi.fn(async () => undefined),
     simulateVoucher: vi.fn(async () => undefined),
@@ -97,7 +104,7 @@ describe("AppHeader live Testnet proof", () => {
     expect(
       screen.getByText(/main RSVP demo remains no-funds/i),
     ).toBeVisible();
-    expect(screen.getByText(/has no cash value/i)).toBeVisible();
+    expect(screen.getAllByText(/has no cash value/i)).not.toHaveLength(0);
     expect(
       screen.getByRole("link", { name: /View transaction/ }),
     ).toHaveAttribute(

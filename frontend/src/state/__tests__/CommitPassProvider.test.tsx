@@ -29,6 +29,10 @@ vi.mock("../../lib/wallet", () => ({
 const contractMocks = vi.hoisted(() => ({
   createEvent: vi.fn(),
   getEvent: vi.fn(),
+  reserve: vi.fn(),
+  getReservation: vi.fn(),
+  voucherMessage: vi.fn(),
+  claimCheckInRefund: vi.fn(),
 }));
 
 vi.mock("../../lib/contract", () => ({
@@ -36,6 +40,10 @@ vi.mock("../../lib/contract", () => ({
   createRefundableRsvpAdapter: vi.fn(() => ({
     getEvent: contractMocks.getEvent,
     createEvent: contractMocks.createEvent,
+    reserve: contractMocks.reserve,
+    getReservation: contractMocks.getReservation,
+    voucherMessage: contractMocks.voucherMessage,
+    claimCheckInRefund: contractMocks.claimCheckInRefund,
   })),
 }));
 
@@ -82,7 +90,7 @@ function contractEvent(
     endAt: 1_900_001_200,
     token:
       "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-    depositAmount: 1n,
+    depositAmount: 10_000n,
     capacity: 1,
     seatsReserved: 0,
     outstandingDeposits: 0,
@@ -103,8 +111,11 @@ function WalletHarness() {
     connectLiveWallet,
     disconnectWallet,
     createLiveContractProof,
+    reserveLiveProofEvent,
+    claimLiveProofRefund,
     refreshLiveContractRead,
     liveContractProof,
+    liveContractLifecycle,
     scannerPublicKey,
   } = useCommitPass();
 
@@ -125,6 +136,11 @@ function WalletHarness() {
       <output data-testid="scanner-key">
         {scannerPublicKey ?? "initializing"}
       </output>
+      <output data-testid="lifecycle-state">
+        {liveContractLifecycle.reservation?.status ?? "unreserved"}|
+        {liveContractLifecycle.scannerReady ? "scanner-ready" : "scanner-off"}|
+        {liveContractLifecycle.transaction?.status ?? "idle"}
+      </output>
       <button type="button" onClick={() => void connectLiveWallet()}>
         Connect
       </button>
@@ -136,6 +152,12 @@ function WalletHarness() {
       </button>
       <button type="button" onClick={() => void createLiveContractProof()}>
         Create proof
+      </button>
+      <button type="button" onClick={() => void reserveLiveProofEvent()}>
+        Reserve proof
+      </button>
+      <button type="button" onClick={() => void claimLiveProofRefund()}>
+        Claim proof
       </button>
       <button type="button" onClick={() => void refreshLiveContractRead()}>
         Refresh proof
@@ -351,7 +373,7 @@ describe("CommitPassProvider wallet lifecycle", () => {
         organizer: ACCOUNT,
         noShowBeneficiary: ACCOUNT,
         token: PUBLIC_TESTNET_CONFIG.xlmSacId,
-        depositAmount: 1n,
+        depositAmount: 10_000n,
         capacity: 1,
       }),
       expect.objectContaining({ timeoutInSeconds: 60 }),
@@ -407,5 +429,113 @@ describe("CommitPassProvider wallet lifecycle", () => {
     await waitFor(() =>
       expect(contractMocks.getEvent).toHaveBeenCalledWith(proofEventId),
     );
+
+    const reserved = {
+      status: "Reserved" as const,
+      reservedAt: 1_899_999_900,
+      settledAt: null,
+    };
+    const checkedIn = {
+      status: "CheckedIn" as const,
+      reservedAt: reserved.reservedAt,
+      settledAt: 1_900_000_001,
+    };
+    contractMocks.reserve.mockImplementation(
+      async (
+        _eventId: string,
+        _attendee: string,
+        options: {
+          onStatus?: (status: {
+            phase: "awaiting-signature" | "confirmed";
+            message: string;
+            hash?: string;
+            updatedAt: number;
+          }) => void;
+        },
+      ) => {
+        options.onStatus?.({
+          phase: "awaiting-signature",
+          message: "Approve the reservation.",
+          updatedAt: Date.now(),
+        });
+        options.onStatus?.({
+          phase: "confirmed",
+          message: "Reservation confirmed.",
+          hash: "3".repeat(64),
+          updatedAt: Date.now(),
+        });
+        return { result: reserved, hash: "3".repeat(64) };
+      },
+    );
+    contractMocks.getReservation
+      .mockResolvedValueOnce(reserved)
+      .mockResolvedValueOnce(checkedIn);
+    contractMocks.voucherMessage.mockResolvedValue(
+      new Uint8Array(32).fill(7),
+    );
+    contractMocks.claimCheckInRefund.mockImplementation(
+      async (
+        _input: unknown,
+        options: {
+          onStatus?: (status: {
+            phase: "awaiting-signature" | "confirmed";
+            message: string;
+            hash?: string;
+            updatedAt: number;
+          }) => void;
+        },
+      ) => {
+        options.onStatus?.({
+          phase: "awaiting-signature",
+          message: "Approve the refund.",
+          updatedAt: Date.now(),
+        });
+        options.onStatus?.({
+          phase: "confirmed",
+          message: "Refund confirmed.",
+          hash: "4".repeat(64),
+          updatedAt: Date.now(),
+        });
+        return { result: checkedIn, hash: "4".repeat(64) };
+      },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reserve proof" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("lifecycle-state")).toHaveTextContent(
+        "Reserved|scanner-ready|confirmed",
+      ),
+    );
+    expect(contractMocks.reserve).toHaveBeenCalledWith(
+      proofEventId,
+      ACCOUNT,
+      expect.objectContaining({ timeoutInSeconds: 60 }),
+    );
+
+    const dateNow = vi
+      .spyOn(Date, "now")
+      .mockReturnValue(1_900_000_001_000);
+    await user.click(screen.getByRole("button", { name: "Claim proof" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("lifecycle-state")).toHaveTextContent(
+        "CheckedIn|scanner-off|confirmed",
+      ),
+    );
+    expect(contractMocks.voucherMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventId: proofEventId,
+        attendee: ACCOUNT,
+        checkedInAt: 1_900_000_001,
+      }),
+    );
+    expect(contractMocks.claimCheckInRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventId: proofEventId,
+        attendee: ACCOUNT,
+        signature: expect.stringMatching(/^[\da-f]{128}$/),
+      }),
+      expect.objectContaining({ timeoutInSeconds: 60 }),
+    );
+    dateNow.mockRestore();
   });
 });

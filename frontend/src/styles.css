@@ -11,8 +11,8 @@
   --muted: #6f7888;
   --border: #d9dee7;
   --surface: #f7f9fc;
-  --orange: #ff4f12;
-  --orange-hover: #e83f05;
+  --orange: #c53a08;
+  --orange-hover: #a92f05;
   --blue: #1557ff;
   --mint: #078b59;
   --mint-surface: #effbf6;
@@ -658,6 +658,54 @@ ol {
   color: var(--ink);
   font-size: 10px;
   font-weight: 700;
+}
+
+.live-lifecycle {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #9fd9be;
+  border-radius: 10px;
+  background: #f3fbf7;
+}
+
+.live-lifecycle__step {
+  display: grid;
+  align-items: start;
+  gap: 9px;
+  grid-template-columns: 27px 1fr;
+}
+
+.live-lifecycle__number {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--blue);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.live-lifecycle__number--done {
+  background: var(--mint);
+}
+
+.live-lifecycle__step > div {
+  display: grid;
+  gap: 2px;
+}
+
+.live-lifecycle__step strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.live-lifecycle__step small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .contract-read,
