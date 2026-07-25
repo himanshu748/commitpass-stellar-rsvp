@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["refundable-rsvp"]
+members = ["event-directory", "refundable-rsvp"]
 
 [workspace.package]
 edition = "2021"

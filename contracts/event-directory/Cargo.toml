@@ -1,0 +1,18 @@
+[package]
+name = "event-directory"
+version = "0.1.0"
+description = "Permissionless cross-contract index for CommitPass events"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk.workspace = true
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
