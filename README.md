@@ -9,6 +9,51 @@ wallet-bound check-in voucher. The attendee submits that voucher and receives
 the full deposit back. Unclaimed no-show deposits settle only to the beneficiary
 disclosed before reservation.
 
+## Rise In reviewer evidence
+
+This repository is a monorepo. The React application and all wallet integration
+source live in [`frontend/`](frontend/). Reviewers can use the
+[root evidence index](REVIEWER_EVIDENCE.md) or open the direct proof below.
+The implementation was already present in the pre-review
+[`aa2f626` commit](https://github.com/himanshu748/commitpass-stellar-rsvp/commit/aa2f62631f7a86c922ee5c0ff2f552918ee4d28c).
+This follow-up only makes that existing evidence easier to locate.
+
+### White Belt wallet proof
+
+- [`frontend/package.json`](https://github.com/himanshu748/commitpass-stellar-rsvp/blob/main/frontend/package.json#L15-L18)
+  installs `@creit.tech/stellar-wallets-kit` 2.5.0 and
+  `@stellar/stellar-sdk`.
+- [`frontend/src/lib/wallet.ts`](https://github.com/himanshu748/commitpass-stellar-rsvp/blob/main/frontend/src/lib/wallet.ts#L130-L190)
+  initializes Stellar Wallets Kit, opens its permission and wallet chooser with
+  `authModal`, validates the returned address and restores it with `getAddress`.
+- [The same wallet adapter](https://github.com/himanshu748/commitpass-stellar-rsvp/blob/main/frontend/src/lib/wallet.ts#L217-L275)
+  disconnects the selected wallet and signs transaction XDR with
+  `StellarWalletsKit.signTransaction`.
+- [`CommitPassProvider.tsx`](https://github.com/himanshu748/commitpass-stellar-rsvp/blob/main/frontend/src/state/CommitPassProvider.tsx#L529-L577)
+  connects and disconnects the live wallet in application state.
+- [`AppHeader.tsx`](https://github.com/himanshu748/commitpass-stellar-rsvp/blob/main/frontend/src/components/AppHeader.tsx#L79-L96)
+  calls the live connection handlers. Its
+  [`Connect wallet` button](https://github.com/himanshu748/commitpass-stellar-rsvp/blob/main/frontend/src/components/AppHeader.tsx#L193-L218)
+  and
+  [`Choose Stellar wallet` option](https://github.com/himanshu748/commitpass-stellar-rsvp/blob/main/frontend/src/components/AppHeader.tsx#L643-L684)
+  provide the visible UI.
+- [`stellar-account.ts`](https://github.com/himanshu748/commitpass-stellar-rsvp/blob/main/frontend/src/lib/stellar-account.ts#L87-L224)
+  reads the Testnet XLM balance, builds the payment, requests the wallet
+  signature and submits it to Horizon.
+
+The application uses Stellar Wallets Kit rather than the raw Freighter API.
+Wallets Kit performs provider permission and address access through
+`authModal`, `fetchAddress` and `getAddress`, so a direct `setAllowed` call is
+not expected.
+
+### Yellow and Orange contract proof
+
+- **Deployed Testnet contract:** [`CBIT5JKA4XGV37FIIMXNSXQNHTYC52P7J65JO6J3QRYQ3YP3DIZPZRRN`](https://stellar.expert/explorer/testnet/contract/CBIT5JKA4XGV37FIIMXNSXQNHTYC52P7J65JO6J3QRYQ3YP3DIZPZRRN)
+- **Deployment transaction:** [`6e748b31…76f51`](https://stellar.expert/explorer/testnet/tx/6e748b3100fd70f03c10dadabbb62f0b064c0357a923bea7691b1ba084776f51)
+- **Verified contract call:** [`f7e21895…ac83e`](https://stellar.expert/explorer/testnet/tx/f7e218954d1e4a75f5c6bbc8e6029b313592d37ab5301b7b7fa44c3e534ac83e)
+- **Real XLM reservation:** [`2036256a…f83d3`](https://stellar.expert/explorer/testnet/tx/2036256aecb600793f87980cd02df92ba8eb3fae4b3ffb14901cb370f9cf83d3)
+- **Scanner-signed refund:** [`291d1d02…3bdb`](https://stellar.expert/explorer/testnet/tx/291d1d02ad1a741b22db56440293fd8b65813ca7002387573505dae65f163bdb)
+
 This repository is a complete Stellar Journey to Mastery Orange Belt submission:
 
 - a polished responsive attendee and organizer web app;
@@ -55,7 +100,7 @@ Open the local URL. The product deliberately offers two separate paths:
 
 - **Use demo wallet** runs the complete RSVP → check-in → refund story locally
   without an extension or funds.
-- **Verify wallet address** opens the official Stellar Wallets Kit chooser.
+- **Choose Stellar wallet** opens the official Stellar Wallets Kit chooser.
   After a Testnet wallet connects, the live panel creates a one-seat event,
   reserves it with a 0.001 XLM commitment, obtains the contract's canonical
   voucher bytes, submits the event-scoped Ed25519 voucher, and returns the full
@@ -104,7 +149,7 @@ storage, contract state, or a backend.
    **Testnet**.
 3. Fund the public address with test-only XLM using
    [Stellar Laboratory's Friendbot](https://lab.stellar.org/account/fund).
-4. Open CommitPass and choose **Connect wallet** → **Verify wallet address**.
+4. Open CommitPass and choose **Connect wallet** → **Choose Stellar wallet**.
    Approve access in Freighter. CommitPass rejects a Mainnet connection.
 5. Confirm that the panel shows the full connected address, `Testnet`, and the
    native XLM balance returned by Horizon.
@@ -193,7 +238,7 @@ official Stellar Wallets Kit and exposes multiple supported wallet providers.
 
 | Artifact | Public value |
 | --- | --- |
-| Contract | `CBIT5JKA4XGV37FIIMXNSXQNHTYC52P7J65JO6J3QRYQ3YP3DIZPZRRN` |
+| Deployed Testnet contract | [`CBIT5JKA4XGV37FIIMXNSXQNHTYC52P7J65JO6J3QRYQ3YP3DIZPZRRN`](https://stellar.expert/explorer/testnet/contract/CBIT5JKA4XGV37FIIMXNSXQNHTYC52P7J65JO6J3QRYQ3YP3DIZPZRRN) |
 | Native Testnet XLM SAC | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 | Wasm SHA-256 | `e6c17cb2c717609f18a34afd69569ea3661641f855584136efe09226c095ea81` |
 | Wasm upload transaction | [`31f0ccaa…33c7a`](https://stellar.expert/explorer/testnet/tx/31f0ccaab93ece2199405e05d1c00f3f9380af70e43e44d2b9ef14fd72633c7a) |
@@ -239,8 +284,8 @@ npm run test:e2e
 npm audit --omit=dev
 ```
 
-The public CI run for commit `125a200` is
-[green](https://github.com/himanshu748/commitpass-stellar-rsvp/actions/runs/30139625279)
+The public CI run for commit `aa2f626` is
+[green](https://github.com/himanshu748/commitpass-stellar-rsvp/actions/runs/30148297086)
 and retains its Playwright report and screenshots as a workflow artifact.
 
 ## Integration boundary
