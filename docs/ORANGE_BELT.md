@@ -71,6 +71,9 @@ publicly deployed; its Testnet deployment fields remain null.
 
 ## Tests and delivery
 
+The table below records the historical verified CI snapshot at commit
+`125a200`. Current test totals are in `REVIEWER_EVIDENCE.md`.
+
 | Layer | Passing evidence |
 | --- | --- |
 | Soroban | 27 Rust tests; formatting; Clippy; two Wasm builds |

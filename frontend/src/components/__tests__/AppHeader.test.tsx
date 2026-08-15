@@ -97,6 +97,10 @@ describe("AppHeader live Testnet proof", () => {
       </MemoryRouter>,
     );
 
+    expect(
+      screen.getByRole("link", { name: "System status" }),
+    ).toHaveAttribute("href", "/status");
+
     await user.click(screen.getByRole("button", { name: /GDVEU…ZA57/ }));
 
     expect(screen.getByText(ACCOUNT, { exact: true })).toBeVisible();

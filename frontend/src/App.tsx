@@ -7,6 +7,7 @@ import { HostEventPage } from "./pages/HostEventPage";
 import { HowItWorksPage } from "./pages/HowItWorksPage";
 import { MyRsvpsPage } from "./pages/MyRsvpsPage";
 import { PassPage } from "./pages/PassPage";
+import { SystemStatusPage } from "./pages/SystemStatusPage";
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="/host" element={<HostEventPage />} />
           <Route path="/host/demo/check-in" element={<CheckInPage />} />
           <Route path="/how-it-works" element={<HowItWorksPage />} />
+          <Route path="/status" element={<SystemStatusPage />} />
           <Route path="*" element={<EventPage />} />
         </Routes>
       </main>
@@ -28,4 +30,3 @@ export default function App() {
     </div>
   );
 }
-

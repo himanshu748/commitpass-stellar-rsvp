@@ -31,6 +31,7 @@ const navItems = [
   { label: "Events", to: "/" },
   { label: "My RSVPs", to: "/my-rsvps" },
   { label: "Host an event", to: "/host" },
+  { label: "System status", to: "/status" },
 ];
 
 export function AppHeader() {
