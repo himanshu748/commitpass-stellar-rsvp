@@ -136,6 +136,7 @@ describe("CommitPass contract event polling", () => {
       startLedger: 9_976,
     });
     expect(result.cursor).toBe("cursor-1");
+    expect(result.receivedEventCount).toBe(5);
     expect(result.events).toEqual([
       {
         id: "event-1",

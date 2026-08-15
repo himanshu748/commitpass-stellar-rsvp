@@ -61,6 +61,8 @@ export interface PollContractEventsOptions {
 export interface PollContractEventsResult {
   events: CommitPassContractEvent[];
   cursor: string;
+  /** Raw RPC page size before application-event decoding and deduplication. */
+  receivedEventCount: number;
 }
 
 export interface ContractEventRetry {
@@ -273,6 +275,7 @@ export async function pollContractEvents(
   return {
     events,
     cursor: nextCursor,
+    receivedEventCount: response.events.length,
   };
 }
 
