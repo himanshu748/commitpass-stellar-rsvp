@@ -186,6 +186,29 @@ describe("CommitPassProvider wallet lifecycle", () => {
     pollerMocks.options = undefined;
   });
 
+  it("uses the supplied runtime config for contract reads and event polling", async () => {
+    const runtimeConfig = {
+      ...PUBLIC_TESTNET_CONFIG,
+      rpcUrl: "https://rpc.example.com",
+      contractId: PUBLIC_TESTNET_CONFIG.xlmSacId,
+    };
+
+    render(
+      <CommitPassProvider runtimeConfig={runtimeConfig}>
+        <WalletHarness />
+      </CommitPassProvider>,
+    );
+
+    await waitFor(() => expect(pollerMocks.start).toHaveBeenCalledOnce());
+    expect(createRefundableRsvpAdapter).toHaveBeenCalledWith(runtimeConfig);
+    expect(pollerMocks.options).toEqual(
+      expect.objectContaining({
+        rpcUrl: "https://rpc.example.com",
+        contractId: PUBLIC_TESTNET_CONFIG.xlmSacId,
+      }),
+    );
+  });
+
   it("loads the Testnet balance after connection and delegates disconnect", async () => {
     const user = userEvent.setup();
     render(

@@ -34,15 +34,19 @@ const NETWORKS: readonly StellarNetwork[] = [
 
 export function readRuntimeConfig(
   environment: RuntimeEnvironment,
+  defaults?: CommitPassRuntimeConfig,
 ): CommitPassRuntimeConfig {
-  const rawMode = stringValue(environment.VITE_COMMITPASS_MODE) ?? "demo";
+  const rawMode =
+    stringValue(environment.VITE_COMMITPASS_MODE) ?? defaults?.mode ?? "demo";
   if (rawMode !== "demo" && rawMode !== "contract") {
     throw new Error(
       'VITE_COMMITPASS_MODE must be either "demo" or "contract".',
     );
   }
   const rawNetwork =
-    stringValue(environment.VITE_STELLAR_NETWORK) ?? "testnet";
+    stringValue(environment.VITE_STELLAR_NETWORK) ??
+    defaults?.network ??
+    "testnet";
   if (!(NETWORKS as readonly string[]).includes(rawNetwork)) {
     throw new Error("VITE_STELLAR_NETWORK is not supported.");
   }
@@ -51,10 +55,20 @@ export function readRuntimeConfig(
     mode: rawMode,
     network: rawNetwork as StellarNetwork,
     networkPassphrase:
-      stringValue(environment.VITE_STELLAR_NETWORK_PASSPHRASE) ?? "",
-    rpcUrl: stringValue(environment.VITE_STELLAR_RPC_URL) ?? "",
-    contractId: stringValue(environment.VITE_COMMITPASS_CONTRACT_ID),
-    xlmSacId: stringValue(environment.VITE_XLM_SAC_ID) ?? "",
+      stringValue(environment.VITE_STELLAR_NETWORK_PASSPHRASE) ??
+      defaults?.networkPassphrase ??
+      "",
+    rpcUrl:
+      stringValue(environment.VITE_STELLAR_RPC_URL) ??
+      defaults?.rpcUrl ??
+      "",
+    contractId:
+      stringValue(environment.VITE_COMMITPASS_CONTRACT_ID) ??
+      defaults?.contractId,
+    xlmSacId:
+      stringValue(environment.VITE_XLM_SAC_ID) ??
+      defaults?.xlmSacId ??
+      "",
   };
   if (config.mode === "contract") {
     assertContractConfiguration(config);

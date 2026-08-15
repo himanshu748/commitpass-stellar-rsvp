@@ -30,6 +30,7 @@ import {
   CommitPassError,
   type CheckInVoucher,
 } from "../lib/domain";
+import type { ContractRuntimeConfig } from "../lib/config";
 import { EphemeralScannerSigner } from "../lib/scanner-crypto";
 import {
   DEMO_ATTENDEE_ADDRESS,
@@ -185,7 +186,13 @@ function transactionStateFromStatus(
   };
 }
 
-export function CommitPassProvider({ children }: { children: ReactNode }) {
+export function CommitPassProvider({
+  children,
+  runtimeConfig = PUBLIC_TESTNET_CONFIG,
+}: {
+  children: ReactNode;
+  runtimeConfig?: ContractRuntimeConfig;
+}) {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [walletName, setWalletName] = useState<string | null>(null);
   const [walletMode, setWalletMode] = useState<WalletMode>(null);
@@ -245,7 +252,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
     }));
     try {
       const { createRefundableRsvpAdapter } = await import("../lib/contract");
-      const adapter = createRefundableRsvpAdapter(PUBLIC_TESTNET_CONFIG);
+      const adapter = createRefundableRsvpAdapter(runtimeConfig);
       const [event, reservation] = await Promise.all([
         adapter.getEvent(target.eventId),
         reservationAttendee === undefined
@@ -304,7 +311,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
         throw error;
       }
     }
-  }, []);
+  }, [runtimeConfig]);
 
   const refreshLiveContractRead = useCallback(
     () => reconcileLiveContractState(),
@@ -329,8 +336,8 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       .then(({ createContractEventPoller }) => {
         if (controller.signal.aborted) return;
         const poller = createContractEventPoller({
-          rpcUrl: PUBLIC_TESTNET_CONFIG.rpcUrl,
-          contractId: PUBLIC_TESTNET_CONFIG.contractId,
+          rpcUrl: runtimeConfig.rpcUrl,
+          contractId: runtimeConfig.contractId,
           lookbackLedgers: 5_000,
           intervalMs: 5_000,
           signal: controller.signal,
@@ -424,7 +431,12 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
       controller.abort();
       stop?.();
     };
-  }, [reconcileLiveContractState, walletAddress, walletMode]);
+  }, [
+    reconcileLiveContractState,
+    runtimeConfig,
+    walletAddress,
+    walletMode,
+  ]);
 
   useEffect(() => {
     let disposed = false;
@@ -745,7 +757,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
         ),
       );
       const adapter = createRefundableRsvpAdapter(
-        PUBLIC_TESTNET_CONFIG,
+        runtimeConfig,
         wallet.getConnectedTestnetWalletAdapter(),
       );
       const receipt = await adapter.createEvent(
@@ -756,7 +768,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
           startAt: now + 60,
           checkInDeadline: now + 660,
           endAt: now + 900,
-          token: PUBLIC_TESTNET_CONFIG.xlmSacId,
+          token: runtimeConfig.xlmSacId,
           depositAmount: 10_000n,
           capacity: 1,
           noShowBeneficiary: walletAddress,
@@ -840,6 +852,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
   }, [
     loadTestnetBalanceForAddress,
     pushToast,
+    runtimeConfig,
     testnetBalance,
     walletAddress,
     walletMode,
@@ -884,7 +897,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
         import("../lib/wallet"),
       ]);
       const adapter = createRefundableRsvpAdapter(
-        PUBLIC_TESTNET_CONFIG,
+        runtimeConfig,
         wallet.getConnectedTestnetWalletAdapter(),
       );
       const receipt = await adapter.reserve(event.id, walletAddress, {
@@ -959,6 +972,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
     liveContractProof.targetEventId,
     loadTestnetBalanceForAddress,
     pushToast,
+    runtimeConfig,
     walletAddress,
     walletMode,
   ]);
@@ -1029,7 +1043,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
         import("../lib/wallet"),
       ]);
       const adapter = createRefundableRsvpAdapter(
-        PUBLIC_TESTNET_CONFIG,
+        runtimeConfig,
         wallet.getConnectedTestnetWalletAdapter(),
       );
       const canonicalMessage = await adapter.voucherMessage(voucher);
@@ -1122,6 +1136,7 @@ export function CommitPassProvider({ children }: { children: ReactNode }) {
     liveContractProof.targetEventId,
     loadTestnetBalanceForAddress,
     pushToast,
+    runtimeConfig,
     walletAddress,
     walletMode,
   ]);
