@@ -7,11 +7,22 @@ import {
   QrCode,
   ShieldCheck,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Link } from "react-router-dom";
+import { PilotFeedbackForm } from "../components/PilotFeedbackForm";
 import { TransactionStatus } from "../components/TransactionStatus";
 import { DEMO_EVENT, DEMO_WALLET, shortAddress } from "../data/demo";
+import {
+  pilotFeedbackCodec,
+  type PilotFeedbackRecord,
+  upsertPilotFeedback,
+} from "../lib/pilot-feedback";
+import {
+  browserLocalStorage,
+  buildStorageNamespace,
+  NamespacedStorage,
+} from "../lib/storage";
 import { createAttendeePass, encodeAttendeePass } from "../lib/voucher";
 import { useCommitPass } from "../state/CommitPassProvider";
 
@@ -25,6 +36,31 @@ export function PassPage() {
     pushToast,
   } = useCommitPass();
   const [busy, setBusy] = useState(false);
+  const saveFeedback = useCallback((record: PilotFeedbackRecord) => {
+    const storage = browserLocalStorage();
+    if (!storage) {
+      throw new Error("Browser storage is unavailable.");
+    }
+    const feedbackStorage = new NamespacedStorage(
+      storage,
+      buildStorageNamespace({ mode: "demo", network: "testnet" }),
+    );
+    const current = feedbackStorage.read(
+      "pilot-feedback",
+      pilotFeedbackCodec,
+    );
+    if (current.status === "invalid") {
+      throw current.error;
+    }
+    feedbackStorage.write(
+      "pilot-feedback",
+      upsertPilotFeedback(
+        current.status === "valid" ? current.value : [],
+        record,
+      ),
+      pilotFeedbackCodec,
+    );
+  }, []);
   const passCode = useMemo(
     () => encodeAttendeePass(
       createAttendeePass({
@@ -179,9 +215,14 @@ export function PassPage() {
               <p className="label">Commitment complete</p>
               <h2>Thanks for showing up.</h2>
               <p>
-                Your transaction receipt is ready. A live pilot can collect
-                optional event feedback here.
+                Your transaction receipt is ready. Share a short optional
+                response to help improve the pilot.
               </p>
+              <PilotFeedbackForm
+                eventId={DEMO_EVENT.contractEventId}
+                wallet={walletAddress ?? undefined}
+                onSubmit={saveFeedback}
+              />
               <Link className="button button--outline button--full" to="/">
                 Return to event
               </Link>
