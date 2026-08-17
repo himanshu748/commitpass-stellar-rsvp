@@ -22,7 +22,13 @@ import {
 
 type StatusState =
   | { phase: "loading" }
-  | { phase: "ready"; result: ContractHealthResult; checkedAt: Date }
+  | {
+      phase: "ready";
+      result: ContractHealthResult;
+      checkedAt: Date;
+      refreshing: boolean;
+      refreshError?: string;
+    }
   | { phase: "error" };
 
 export interface SystemStatusPageProps {
@@ -38,15 +44,33 @@ export function SystemStatusPage({
   const runCheck = useCallback(async () => {
     const currentRequest = requestId.current + 1;
     requestId.current = currentRequest;
-    setState({ phase: "loading" });
+    setState((current) =>
+      current.phase === "ready"
+        ? { ...current, refreshing: true, refreshError: undefined }
+        : { phase: "loading" },
+    );
     try {
       const result = await loadHealth();
       if (requestId.current === currentRequest) {
-        setState({ phase: "ready", result, checkedAt: new Date() });
+        setState({
+          phase: "ready",
+          result,
+          checkedAt: new Date(),
+          refreshing: false,
+        });
       }
     } catch {
       if (requestId.current === currentRequest) {
-        setState({ phase: "error" });
+        setState((current) =>
+          current.phase === "ready"
+            ? {
+                ...current,
+                refreshing: false,
+                refreshError:
+                  "The latest refresh failed. Showing the last verified result.",
+              }
+            : { phase: "error" },
+        );
       }
     }
   }, [loadHealth]);
@@ -96,6 +120,8 @@ export function SystemStatusPage({
         <StatusResult
           checkedAt={state.checkedAt}
           onRefresh={runCheck}
+          refreshError={state.refreshError}
+          refreshing={state.refreshing}
           result={state.result}
         />
       )}
@@ -106,10 +132,14 @@ export function SystemStatusPage({
 function StatusResult({
   checkedAt,
   onRefresh,
+  refreshError,
+  refreshing,
   result,
 }: {
   checkedAt: Date;
   onRefresh(): Promise<void>;
+  refreshError?: string;
+  refreshing: boolean;
   result: ContractHealthResult;
 }) {
   const headline =
@@ -137,12 +167,20 @@ function StatusResult({
         </div>
         <button
           className="button button--outline"
+          disabled={refreshing}
           onClick={() => void onRefresh()}
           type="button"
         >
-          <RefreshCw size={17} /> Refresh
+          <RefreshCw className={refreshing ? "is-spinning" : undefined} size={17} />
+          {refreshing ? "Refreshing…" : "Refresh"}
         </button>
       </section>
+
+      {refreshError ? (
+        <p className="status-page__stale" role="status">
+          <TriangleAlert aria-hidden="true" size={18} /> {refreshError}
+        </p>
+      ) : null}
 
       <div className="status-checks">
         <section>

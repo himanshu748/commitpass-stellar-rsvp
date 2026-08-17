@@ -2645,6 +2645,20 @@ ol {
   font-size: 13px;
 }
 
+.status-overview .is-spinning {
+  animation: spin 1.1s linear infinite;
+}
+
+.status-page__stale {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 18px 0 0;
+  color: #8a531c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .status-checks {
   display: grid;
   border-bottom: 1px solid var(--border);

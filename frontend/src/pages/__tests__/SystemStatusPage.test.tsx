@@ -76,6 +76,41 @@ describe("SystemStatusPage", () => {
     expect(loadHealth).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the last verified result visible when a refresh fails", async () => {
+    const user = userEvent.setup();
+    let rejectRefresh!: (error: Error) => void;
+    const loadHealth = vi
+      .fn<() => Promise<ContractHealthResult>>()
+      .mockResolvedValueOnce(HEALTHY_RESULT)
+      .mockImplementationOnce(
+        () =>
+          new Promise<ContractHealthResult>((_resolve, reject) => {
+            rejectRefresh = reject;
+          }),
+      );
+    render(
+      <MemoryRouter>
+        <SystemStatusPage loadHealth={loadHealth} />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("All systems operational")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+
+    expect(screen.getByText("All systems operational")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Refreshing…" })).toBeDisabled();
+
+    rejectRefresh(new Error("RPC temporarily unavailable"));
+
+    expect(
+      await screen.findByText(
+        "The latest refresh failed. Showing the last verified result.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("123,456")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+  });
+
   it("does not claim token verification when the contract check is degraded", async () => {
     const degradedResult: ContractHealthResult = {
       ...HEALTHY_RESULT,
