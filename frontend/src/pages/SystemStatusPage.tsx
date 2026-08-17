@@ -12,6 +12,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
+  PilotProgressPanel,
+  type PilotProgressPanelProps,
+} from "../components/PilotProgressPanel";
+import {
   checkContractHealth,
   type ContractHealthResult,
 } from "../lib/contract-health";
@@ -33,10 +37,12 @@ type StatusState =
 
 export interface SystemStatusPageProps {
   loadHealth?: () => Promise<ContractHealthResult>;
+  loadPilotMetrics?: PilotProgressPanelProps["loadMetrics"];
 }
 
 export function SystemStatusPage({
   loadHealth = loadPublicContractHealth,
+  loadPilotMetrics,
 }: SystemStatusPageProps) {
   const [state, setState] = useState<StatusState>({ phase: "loading" });
   const requestId = useRef(0);
@@ -125,6 +131,8 @@ export function SystemStatusPage({
           result={state.result}
         />
       )}
+
+      <PilotProgressPanel loadMetrics={loadPilotMetrics} />
     </div>
   );
 }

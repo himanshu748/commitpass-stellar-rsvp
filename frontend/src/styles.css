@@ -2724,6 +2724,150 @@ ol {
   color: var(--ink);
 }
 
+.pilot-progress {
+  margin-top: 34px;
+  padding: 30px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--paper);
+}
+
+.pilot-progress__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.pilot-progress__heading > svg {
+  color: var(--blue);
+}
+
+.pilot-progress__heading span,
+.pilot-progress__metrics span {
+  color: var(--body);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pilot-progress__heading h2 {
+  margin-top: 7px;
+  font-size: 25px;
+}
+
+.pilot-progress__heading p {
+  max-width: 650px;
+  margin-top: 8px;
+  color: var(--body);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.pilot-progress__state {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 26px;
+  color: var(--body);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pilot-progress__state .is-spinning {
+  animation: spin 1.1s linear infinite;
+}
+
+.pilot-progress__state--error {
+  color: #8a531c;
+}
+
+.pilot-progress__metrics {
+  display: grid;
+  gap: 14px;
+  margin-top: 27px;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.pilot-progress__metrics > div {
+  display: grid;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 17px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  grid-template-columns: 26px 1fr;
+}
+
+.pilot-progress__metrics svg {
+  color: var(--mint);
+  grid-row: 1 / span 2;
+}
+
+.pilot-progress__metrics strong {
+  font-size: 22px;
+}
+
+.pilot-progress__goals {
+  display: grid;
+  gap: 18px;
+  margin-top: 24px;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.pilot-progress__goals span {
+  display: flex;
+  justify-content: space-between;
+  color: var(--body);
+  font-size: 13px;
+}
+
+.pilot-progress__goals progress {
+  width: 100%;
+  height: 9px;
+  margin-top: 9px;
+  accent-color: var(--blue);
+}
+
+.pilot-progress__proof {
+  margin-top: 28px;
+}
+
+.pilot-progress__proof h3 {
+  font-size: 15px;
+}
+
+.pilot-progress__proof ul {
+  margin-top: 10px;
+  list-style: none;
+}
+
+.pilot-progress__proof li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.pilot-progress__proof a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--blue);
+  font-weight: 750;
+}
+
+.pilot-progress__source,
+.pilot-progress__empty {
+  margin-top: 18px;
+  color: var(--body);
+  font-size: 12px;
+}
+
 /* Animations */
 
 @keyframes spin {
@@ -3235,6 +3379,20 @@ ol {
 
   .status-page__read-only span {
     grid-column: 2;
+  }
+
+  .pilot-progress {
+    padding: 24px 20px;
+  }
+
+  .pilot-progress__metrics,
+  .pilot-progress__goals {
+    grid-template-columns: 1fr;
+  }
+
+  .pilot-progress__proof li {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .threat-model {

@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ContractHealthResult } from "../../lib/contract-health";
+import type { PilotMetricsSnapshot } from "../../components/PilotProgressPanel";
 import { PUBLIC_TESTNET_CONTRACT_ID } from "../../lib/seed";
 import { SystemStatusPage } from "../SystemStatusPage";
 
@@ -24,6 +25,23 @@ const HEALTHY_RESULT: ContractHealthResult = {
   },
 };
 
+const EMPTY_PILOT_SNAPSHOT: PilotMetricsSnapshot = {
+  complete: true,
+  pages: 1,
+  metrics: {
+    uniqueReservingWallets: 0,
+    uniqueOrganizers: 0,
+    reservations: 0,
+    checkInRefunds: 0,
+    activeEvents: 0,
+    green: { target: 10, achieved: 0, percentage: 0 },
+    blue: { target: 50, achieved: 0, percentage: 0 },
+    proof: [],
+  },
+};
+
+const loadPilotMetrics = async () => EMPTY_PILOT_SNAPSHOT;
+
 describe("SystemStatusPage", () => {
   it("shows loading first and then read-only RPC and contract evidence", async () => {
     let resolveHealth!: (result: ContractHealthResult) => void;
@@ -35,11 +53,14 @@ describe("SystemStatusPage", () => {
     );
     render(
       <MemoryRouter>
-        <SystemStatusPage loadHealth={loadHealth} />
+        <SystemStatusPage
+          loadHealth={loadHealth}
+          loadPilotMetrics={loadPilotMetrics}
+        />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(screen.getByText(/Checking Stellar Testnet/)).toHaveTextContent(
       "Checking Stellar Testnet and the deployed contract",
     );
     resolveHealth(HEALTHY_RESULT);
@@ -63,7 +84,10 @@ describe("SystemStatusPage", () => {
       .mockResolvedValueOnce(HEALTHY_RESULT);
     render(
       <MemoryRouter>
-        <SystemStatusPage loadHealth={loadHealth} />
+        <SystemStatusPage
+          loadHealth={loadHealth}
+          loadPilotMetrics={loadPilotMetrics}
+        />
       </MemoryRouter>,
     );
 
@@ -90,7 +114,10 @@ describe("SystemStatusPage", () => {
       );
     render(
       <MemoryRouter>
-        <SystemStatusPage loadHealth={loadHealth} />
+        <SystemStatusPage
+          loadHealth={loadHealth}
+          loadPilotMetrics={loadPilotMetrics}
+        />
       </MemoryRouter>,
     );
 
@@ -126,7 +153,10 @@ describe("SystemStatusPage", () => {
 
     render(
       <MemoryRouter>
-        <SystemStatusPage loadHealth={async () => degradedResult} />
+        <SystemStatusPage
+          loadHealth={async () => degradedResult}
+          loadPilotMetrics={loadPilotMetrics}
+        />
       </MemoryRouter>,
     );
 
