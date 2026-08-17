@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 
 import type { PilotMetrics } from "../../lib/pilot-metrics";
 import {
@@ -29,12 +30,19 @@ const METRICS: PilotMetrics = {
 
 describe("PilotProgressPanel", () => {
   it("shows deduplicated pilot progress and explorer proof", async () => {
+    const user = userEvent.setup();
+    const downloadEvidence = vi.fn();
     const snapshot: PilotMetricsSnapshot = {
       metrics: METRICS,
       complete: true,
       pages: 2,
     };
-    render(<PilotProgressPanel loadMetrics={async () => snapshot} />);
+    render(
+      <PilotProgressPanel
+        downloadEvidence={downloadEvidence}
+        loadMetrics={async () => snapshot}
+      />,
+    );
 
     expect(await screen.findByText("Verified wallets")).toBeVisible();
     expect(screen.getByText("Reservations").parentElement).toHaveTextContent("3");
@@ -49,6 +57,11 @@ describe("PilotProgressPanel", () => {
       "href",
       `https://stellar.expert/explorer/testnet/tx/${METRICS.proof[0].txHash}`,
     );
+    await user.click(
+      screen.getByRole("button", { name: "Download evidence JSON" }),
+    );
+    expect(downloadEvidence).toHaveBeenCalledWith(snapshot);
+    expect(screen.getByText(/Contains public ledger data only/)).toBeVisible();
   });
 
   it("reports an independent analytics failure without overstating activity", async () => {

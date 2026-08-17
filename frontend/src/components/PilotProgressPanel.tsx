@@ -1,6 +1,7 @@
 import {
   Activity,
   CircleCheck,
+  Download,
   ExternalLink,
   RefreshCw,
   TriangleAlert,
@@ -12,6 +13,7 @@ import {
   buildPilotMetrics,
   type PilotMetrics,
 } from "../lib/pilot-metrics";
+import { serializePilotEvidence } from "../lib/pilot-evidence";
 import {
   PUBLIC_TESTNET_CONFIG,
   PUBLIC_TESTNET_CONTRACT_DEPLOYMENT_LEDGER,
@@ -25,6 +27,7 @@ export interface PilotMetricsSnapshot {
 
 export interface PilotProgressPanelProps {
   loadMetrics?: () => Promise<PilotMetricsSnapshot>;
+  downloadEvidence?: (snapshot: PilotMetricsSnapshot) => void;
 }
 
 type PilotMetricsState =
@@ -34,6 +37,7 @@ type PilotMetricsState =
 
 export function PilotProgressPanel({
   loadMetrics = loadPublicPilotMetrics,
+  downloadEvidence = downloadPilotEvidence,
 }: PilotProgressPanelProps) {
   const [state, setState] = useState<PilotMetricsState>({ phase: "loading" });
   const requestId = useRef(0);
@@ -83,15 +87,20 @@ export function PilotProgressPanel({
           independent.
         </p>
       ) : (
-        <PilotMetricsResult snapshot={state.snapshot} />
+        <PilotMetricsResult
+          downloadEvidence={downloadEvidence}
+          snapshot={state.snapshot}
+        />
       )}
     </section>
   );
 }
 
 function PilotMetricsResult({
+  downloadEvidence,
   snapshot,
 }: {
+  downloadEvidence(snapshot: PilotMetricsSnapshot): void;
   snapshot: PilotMetricsSnapshot;
 }) {
   const { metrics } = snapshot;
@@ -149,6 +158,17 @@ function PilotMetricsResult({
         {snapshot.complete
           ? `Complete history loaded in ${snapshot.pages} ${snapshot.pages === 1 ? "page" : "pages"}.`
           : "History reached its safety limit. Counts are a verified lower bound."}
+      </p>
+      <button
+        className="button button--outline pilot-progress__download"
+        onClick={() => downloadEvidence(snapshot)}
+        type="button"
+      >
+        <Download aria-hidden="true" size={16} /> Download evidence JSON
+      </button>
+      <p className="pilot-progress__privacy">
+        Contains public ledger data only. No feedback or private data is
+        included.
       </p>
     </>
   );
@@ -212,4 +232,18 @@ async function loadPublicPilotMetrics(): Promise<PilotMetricsSnapshot> {
     complete: history.complete,
     pages: history.pages,
   };
+}
+
+function downloadPilotEvidence(snapshot: PilotMetricsSnapshot): void {
+  const contents = serializePilotEvidence(snapshot);
+  const url = URL.createObjectURL(
+    new Blob([contents], { type: "application/json;charset=utf-8" }),
+  );
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `commitpass-pilot-evidence-${new Date()
+    .toISOString()
+    .slice(0, 10)}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

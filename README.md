@@ -16,12 +16,12 @@ source live in [`frontend/`](frontend/). Reviewers can use the
 [root evidence index](REVIEWER_EVIDENCE.md) or open the direct proof below.
 The core White, Yellow and Orange implementation was present in the pre-review
 [`aa2f626` commit](https://github.com/himanshu748/commitpass-stellar-rsvp/commit/aa2f62631f7a86c922ee5c0ff2f552918ee4d28c).
-The August sprint responds to the commit-count review with ten meaningful
+The August sprint responds to the commit-count review with thirteen meaningful
 product and production-readiness commits.
 
 ### August challenge correction
 
-The August challenge work is exactly ten meaningful commits after the July
+The August challenge work contains thirteen meaningful commits after the July
 review baseline. Reviewers can inspect the complete
 [August comparison](https://github.com/himanshu748/commitpass-stellar-rsvp/compare/cdeb8361d3c79920ba07f9be2b4982308d6e12b0...main).
 
@@ -35,6 +35,9 @@ review baseline. Reviewers can inspect the complete
 8. Persist versioned organizer drafts safely.
 9. Verify RPC and contract readiness with bounded read-only checks.
 10. Add a tested read-only system status screen with safe degraded states.
+11. Preserve the last verified health result during failed refreshes.
+12. Publish deduplicated Testnet pilot analytics with explorer proof.
+13. Export a privacy-safe JSON evidence report from public ledger activity.
 
 ### White Belt wallet proof
 

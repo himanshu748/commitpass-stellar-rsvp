@@ -194,7 +194,7 @@ requires the wallet holder to review and approve it.
 - [x] Public contract address and verifiable contract-call transaction hash.
 - [x] Production wallet-options screenshot captured from the real Stellar
   Wallets Kit modal (`docs/screenshots/wallet-options-production.jpg`).
-- [x] Ten meaningful August commits are visible in the
+- [x] Thirteen meaningful August commits are visible in the
   [August comparison](https://github.com/himanshu748/commitpass-stellar-rsvp/compare/cdeb8361d3c79920ba07f9be2b4982308d6e12b0...main).
 
 ## Orange Belt submission copy
@@ -239,7 +239,7 @@ submission refers to Refundable RSVP and the native Testnet XLM SAC.
 
 - [x] Public repository with complete setup, architecture, security and
   deployment documentation.
-- [x] Ten meaningful August commits plus the established implementation
+- [x] Thirteen meaningful August commits plus the established implementation
   history. The August comparison is linked above.
 - [x] Responsive production frontend and explicit loading/error states.
 - [x] Complete wallet-approved create → reserve → signed check-in → refund

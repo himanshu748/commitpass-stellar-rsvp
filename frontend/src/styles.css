@@ -2868,6 +2868,16 @@ ol {
   font-size: 12px;
 }
 
+.pilot-progress__download {
+  margin-top: 18px;
+}
+
+.pilot-progress__privacy {
+  margin-top: 9px;
+  color: var(--body);
+  font-size: 11px;
+}
+
 /* Animations */
 
 @keyframes spin {
